@@ -44,6 +44,9 @@ into SQL strings.
   codes are filled in.
 - `decimal.Decimal` parameters are not supported (convert to `str` or
   `float`); NUMERIC columns come back as `float`.
+- **BLOB columns cannot be read** (`Unsupported column type (520 ...)`),
+  a limitation of rsfbclient's native client. Select around them or cast
+  (`CAST(blob_col AS VARCHAR(...))`).
 - Statements are routed by their first keyword: only `SELECT`/`WITH`
   return result rows.
 - **Build currently requires Python ≤ 3.13** (PyO3 0.22). Production runs
@@ -100,13 +103,12 @@ cp .env.example .env   # then edit the values
 
 ## Project layout
 
-| Path          | Contents                                              |
-|---------------|-------------------------------------------------------|
-| `src/lib.rs`  | The entire Rust extension module                      |
-| `tests/`      | Print-based test scripts (no pytest yet)              |
-| `benchmarks/` | Benchmark suite, performance test runner and baseline |
-| `scripts/`    | One-off debug/analysis scripts and demos              |
-| `docs/`       | Historical development notes and Windows instructions |
+| Path           | Contents                                              |
+|----------------|-------------------------------------------------------|
+| `src/lib.rs`   | The entire Rust extension module                      |
+| `tests/suite/` | pytest suite (write tests need FIREBIRD_ALLOW_WRITE_TESTS=1) |
+| `benchmarks/`  | Benchmark suite, performance test runner and baseline |
+| `docs/`        | Windows build notes and benchmark framework docs      |
 
 ## License
 

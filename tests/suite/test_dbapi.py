@@ -146,6 +146,19 @@ def test_commit_rollback_without_writes(conn):
     conn.rollback()  # no pending transaction: must not raise
 
 
+def test_wide_select(conn):
+    # Guards against any column-count limitation in the row conversion.
+    # (Not SELECT * on a system table: those contain BLOB columns, which
+    # rsfbclient's native client cannot read.)
+    n = 25
+    cols = ", ".join(f"CAST({i} AS INTEGER) AS C{i}" for i in range(n))
+    cur = conn.cursor()
+    cur.execute(f"SELECT {cols} FROM RDB$DATABASE")
+    rows = cur.fetchall()
+    assert rows == [tuple(range(n))]
+    assert [d[0] for d in cur.description] == [f"C{i}" for i in range(n)]
+
+
 def test_multiple_cursors_share_connection(conn):
     c1 = conn.cursor()
     c2 = conn.cursor()

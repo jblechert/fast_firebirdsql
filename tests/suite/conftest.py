@@ -36,7 +36,8 @@ def pytest_collection_modifyitems(config, items):
     if not _server_reachable():
         skip = pytest.mark.skip(reason=f"Firebird server {DB_CONFIG['host']}:{DB_CONFIG['port']} not reachable")
         for item in items:
-            item.add_marker(skip)
+            if item.get_closest_marker("nodb") is None:
+                item.add_marker(skip)
 
 
 requires_write = pytest.mark.skipif(

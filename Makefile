@@ -69,10 +69,6 @@ wheel:
 test: dev-install
 	@echo "🧪 Running pytest suite (read-only)..."
 	$(PYTHON) -m pytest -q
-	@echo "🧪 Running basic functionality tests..."
-	$(PYTHON) tests/test_imports.py
-	$(PYTHON) tests/test_firebirdsql_compatibility.py
-	$(PYTHON) tests/test_rename.py
 
 test-write: dev-install
 	@echo "🧪 Running pytest suite incl. write tests (creates/drops TEST_FAST_FBSQL)..."
