@@ -43,11 +43,11 @@ build-dev:
 
 check:
 	@echo "🔍 Checking code with cargo..."
-	cargo check
+	PYO3_PYTHON=$(PYTHON) cargo check
 
 lint:
 	@echo "🧹 Running cargo clippy..."
-	cargo clippy -- -D warnings
+	PYO3_PYTHON=$(PYTHON) cargo clippy -- -D warnings
 
 # Installation commands
 install:

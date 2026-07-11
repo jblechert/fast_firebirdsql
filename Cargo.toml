@@ -1,5 +1,5 @@
 [package]
-name = "firebird_query"
+name = "fast_firebirdsql"
 version = "0.5.1"
 edition = "2021"
 
@@ -21,12 +21,18 @@ rsfbclient = { version = "0.25.2", features = ["linking"] }
 [target.x86_64-unknown-linux-gnu.dependencies]
 rsfbclient = { version = "0.25.2", features = ["linking"] }
 
+[lints.clippy]
+# pyo3 0.22's #[pymethods]/#[pyfunction] macro expansion triggers this lint
+# on every wrapped method; it does not point at real code in this crate
+useless_conversion = "allow"
+
 # Build optimizations
 [profile.release]
 opt-level = 3
 lto = true
 codegen-units = 1
-panic = "abort"
+# panic = "unwind" (default): a Rust panic must not abort the whole
+# Python process hosting this cdylib
 strip = true
 
 [profile.dev]
