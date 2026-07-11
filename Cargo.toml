@@ -1,0 +1,34 @@
+[package]
+name = "firebird_query"
+version = "0.3.2"
+edition = "2021"
+
+[lib]
+name = "fast_firebirdsql"
+crate-type = ["cdylib"]
+
+[dependencies]
+rsfbclient = { version = "0.25.2", default-features = false }
+pyo3 = { version = "0.22", features = ["extension-module"] }
+chrono = { version = "0.4", default-features = false }
+
+[target.x86_64-pc-windows-gnu.dependencies]
+rsfbclient = { version = "0.25.2", features = ["linking"] }
+
+[target.x86_64-pc-windows-msvc.dependencies]
+rsfbclient = { version = "0.25.2", features = ["linking"] }
+
+[target.x86_64-unknown-linux-gnu.dependencies]
+rsfbclient = { version = "0.25.2", features = ["linking"] }
+
+# Build optimizations
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true
+
+[profile.dev]
+opt-level = 1
+

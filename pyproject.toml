@@ -1,0 +1,22 @@
+[build-system]
+requires = ["maturin>=1.0,<2.0"]
+build-backend = "maturin"
+
+[project]
+name = "fast_firebirdsql"
+version = "0.3.2"
+description = "Fast Firebird database queries using Rust - firebirdsql compatible"
+authors = [
+    {name = "Your Name", email = "your.email@example.com"}
+]
+license = {text = "MIT"}
+requires-python = ">=3.8"
+
+[tool.maturin]
+features = ["pyo3/extension-module"]
+# Include Windows DLLs and setup script in the wheel
+include = [
+    { path = "windows-firebird/fbclient.dll", format = "wheel" },
+    { path = "windows-firebird/python313.dll", format = "wheel" },
+    { path = "setup_windows_dlls.py", format = "wheel" }
+]

@@ -1,0 +1,17 @@
+# Rust build artifacts
+/target/
+
+# Python
+__pycache__/
+*.pyc
+*.so
+
+# Local environment / credentials
+.env
+
+# Benchmark output
+benchmark_results_*.json
+ci_benchmark_results_*.json
+
+# Accidental junk (deleted, kept out of history)
+/zipfile
