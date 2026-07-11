@@ -82,6 +82,32 @@ def test_date_param(conn):
     assert result == datetime.datetime(2026, 7, 11, 0, 0, 0)
 
 
+def test_decimal_param_exact(conn):
+    # Decimal params are sent as plain-notation strings; the server casts
+    # them to NUMERIC exactly. Verified via VARCHAR cast (read-only).
+    import decimal
+    cur = conn.cursor()
+    for value in ("12345678.9012", "-0.0001", "0.1", "99999999999999.9999"):
+        d = decimal.Decimal(value)
+        cur.execute(
+            "SELECT CAST(CAST(? AS NUMERIC(18,4)) AS VARCHAR(30)) FROM RDB$DATABASE",
+            (d,),
+        )
+        result = decimal.Decimal(cur.fetchall()[0][0])
+        assert result == d, f"{value}: {result} != {d}"
+
+
+def test_decimal_scientific_notation_param(conn):
+    # Decimal('1E+2') must not reach the server in scientific notation
+    import decimal
+    cur = conn.cursor()
+    cur.execute(
+        "SELECT CAST(CAST(? AS NUMERIC(18,4)) AS VARCHAR(30)) FROM RDB$DATABASE",
+        (decimal.Decimal("1E+2"),),
+    )
+    assert decimal.Decimal(cur.fetchall()[0][0]) == decimal.Decimal(100)
+
+
 def test_params_as_list(conn):
     cur = conn.cursor()
     cur.execute("SELECT CAST(? AS INTEGER) FROM RDB$DATABASE", [7])
@@ -273,6 +299,22 @@ def test_autocommit_mode(autocommit_conn, test_table, conn):
     conn.commit()
 
     acur.execute(f"DELETE FROM {test_table}")
+
+
+@requires_write
+def test_decimal_column_roundtrip(conn, test_table):
+    # Storage is exact (verified via VARCHAR cast); reading the column
+    # directly yields float — a documented limitation of rsfbclient
+    import decimal
+    d = decimal.Decimal("4711.0815")
+    cur = conn.cursor()
+    cur.execute(f"INSERT INTO {test_table} (ID, AMOUNT) VALUES (?, ?)", (1, d))
+    cur.execute(f"SELECT CAST(AMOUNT AS VARCHAR(30)) FROM {test_table}")
+    assert decimal.Decimal(cur.fetchall()[0][0]) == d
+    cur.execute(f"SELECT AMOUNT FROM {test_table}")
+    value = cur.fetchall()[0][0]
+    assert isinstance(value, float) and abs(value - float(d)) < 1e-9
+    conn.rollback()
 
 
 @requires_write

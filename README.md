@@ -34,16 +34,19 @@ every statement immediately (the behaviour of versions before 0.6.0).
 `cursor.execute(sql, params)` and `cursor.executemany(sql, param_sets)`
 accept qmark-style (`?`) placeholders with a tuple or list of values.
 Supported parameter types: `None`, `bool`, `int`, `float`, `str`, `bytes`,
-`datetime.datetime`, `datetime.date`. Never interpolate untrusted input
-into SQL strings.
+`datetime.datetime`, `datetime.date`, `decimal.Decimal` (sent as an exact
+plain-notation string; the server casts it to NUMERIC without precision
+loss). Never interpolate untrusted input into SQL strings.
 
 ## Known limitations
 
 - `cursor.description` is derived from the first result row; for a SELECT
   that returns no rows it is `None`. Only column names and coarse type
   codes are filled in.
-- `decimal.Decimal` parameters are not supported (convert to `str` or
-  `float`); NUMERIC columns come back as `float`.
+- **Reading NUMERIC/DECIMAL columns yields `float`, not `decimal.Decimal`**
+  (rsfbclient coerces them to DOUBLE on the wire) — unlike the pure-Python
+  `firebirdsql` driver. Writing `Decimal` parameters is exact; for exact
+  reads use `CAST(col AS VARCHAR(...))` and convert in Python.
 - BLOB columns work since v0.6.1: `BLOB SUB_TYPE TEXT` maps to `str`,
   `BLOB SUB_TYPE 0` (binary) to `bytes` — both directions. Only internal
   BLR metadata blobs (subtype 2, e.g. `RDB$VIEW_BLR`) cannot be read, so

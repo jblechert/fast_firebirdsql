@@ -1,6 +1,7 @@
 use pyo3::exceptions::{PyRuntimeError, PyTypeError};
 use pyo3::prelude::*;
-use pyo3::types::{PyBool, PyBytes, PyDate, PyDateAccess, PyDateTime, PyDict, PyTimeAccess, PyTuple};
+use pyo3::sync::GILOnceCell;
+use pyo3::types::{PyBool, PyBytes, PyDate, PyDateAccess, PyDateTime, PyDict, PyTimeAccess, PyTuple, PyType};
 use rsfbclient::prelude::*;
 use rsfbclient::{Row, SimpleConnection, SqlType};
 use chrono::{Datelike, NaiveDate, NaiveDateTime, Timelike};
@@ -130,6 +131,16 @@ fn sqltype_type_code(sql_type: &SqlType) -> Option<&'static str> {
     }
 }
 
+/// decimal.Decimal, resolved once
+static DECIMAL_TYPE: GILOnceCell<Py<PyType>> = GILOnceCell::new();
+
+fn decimal_type<'py>(py: Python<'py>) -> PyResult<&'py Py<PyType>> {
+    DECIMAL_TYPE.get_or_try_init(py, || {
+        let ty = py.import_bound("decimal")?.getattr("Decimal")?;
+        Ok(ty.downcast_into::<PyType>().map_err(PyErr::from)?.unbind())
+    })
+}
+
 /// Convert a single Python parameter value to a Firebird SqlType
 fn py_param_to_sqltype(obj: &Bound<'_, PyAny>) -> PyResult<SqlType> {
     if obj.is_none() {
@@ -159,6 +170,13 @@ fn py_param_to_sqltype(obj: &Bound<'_, PyAny>) -> PyResult<SqlType> {
         let ts = NaiveDateTime::new(date, chrono::NaiveTime::MIN);
         return Ok(SqlType::Timestamp(ts));
     }
+    // Decimal must be checked before float: Decimal has __float__, so the
+    // f64 extraction below would silently accept it lossily. Sent as a
+    // plain-notation string; the server casts it to NUMERIC exactly.
+    if obj.is_instance(decimal_type(obj.py())?.bind(obj.py()))? {
+        let s = obj.call_method1("__format__", ("f",))?.extract::<String>()?;
+        return Ok(SqlType::Text(s));
+    }
     if let Ok(i) = obj.extract::<i64>() {
         return Ok(SqlType::Integer(i));
     }
@@ -172,7 +190,7 @@ fn py_param_to_sqltype(obj: &Bound<'_, PyAny>) -> PyResult<SqlType> {
         return Ok(SqlType::Binary(b.as_bytes().to_vec()));
     }
     Err(PyErr::new::<PyTypeError, _>(format!(
-        "unsupported parameter type: {} (supported: None, bool, int, float, str, bytes, datetime, date)",
+        "unsupported parameter type: {} (supported: None, bool, int, float, str, bytes, datetime, date, Decimal)",
         obj.get_type().name().map(|n| n.to_string()).unwrap_or_else(|_| "?".into())
     )))
 }

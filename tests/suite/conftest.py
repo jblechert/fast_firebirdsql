@@ -89,7 +89,7 @@ def test_table(conn):
     except RuntimeError:
         conn.rollback()
     cur.execute(
-        f"CREATE TABLE {TEST_TABLE} (ID INTEGER NOT NULL, NAME VARCHAR(50), TS TIMESTAMP)"
+        f"CREATE TABLE {TEST_TABLE} (ID INTEGER NOT NULL, NAME VARCHAR(50), TS TIMESTAMP, AMOUNT NUMERIC(18,4))"
     )
     conn.commit()
     yield TEST_TABLE
