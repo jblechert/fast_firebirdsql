@@ -110,7 +110,9 @@ fn sqltype_to_python(py: Python, sql_type: SqlType) -> PyResult<PyObject> {
             )?;
             Ok(py_datetime.to_object(py))
         },
-        SqlType::Binary(bytes) => Ok(bytes.to_object(py)),
+        // Vec<u8>.to_object() would produce a Python list of ints; binary
+        // data (e.g. BLOB SUB_TYPE 0) must come back as bytes
+        SqlType::Binary(bytes) => Ok(PyBytes::new_bound(py, &bytes).to_object(py)),
         SqlType::Null => Ok(py.None()),
     }
 }

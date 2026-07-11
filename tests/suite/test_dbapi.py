@@ -15,7 +15,7 @@ from db_config import DB_CONFIG
 
 import fast_firebirdsql
 
-from conftest import requires_write
+from conftest import drop_table_fresh, requires_write
 
 
 # --- read-only tests ---------------------------------------------------
@@ -146,10 +146,17 @@ def test_commit_rollback_without_writes(conn):
     conn.rollback()  # no pending transaction: must not raise
 
 
+def test_text_blob_read(conn):
+    # BLOB SUB_TYPE TEXT comes back as str (read-only via CAST)
+    cur = conn.cursor()
+    cur.execute("SELECT CAST(? AS BLOB SUB_TYPE TEXT) FROM RDB$DATABASE", ("blob-inhalt äöü",))
+    assert cur.fetchall() == [("blob-inhalt äöü",)]
+
+
 def test_wide_select(conn):
     # Guards against any column-count limitation in the row conversion.
-    # (Not SELECT * on a system table: those contain BLOB columns, which
-    # rsfbclient's native client cannot read.)
+    # (Not SELECT * on a system table: those contain BLR blobs, subtype 2,
+    # which rsfbclient cannot read.)
     n = 25
     cols = ", ".join(f"CAST({i} AS INTEGER) AS C{i}" for i in range(n))
     cur = conn.cursor()
@@ -266,6 +273,34 @@ def test_autocommit_mode(autocommit_conn, test_table, conn):
     conn.commit()
 
     acur.execute(f"DELETE FROM {test_table}")
+
+
+@requires_write
+def test_blob_roundtrip():
+    # Self-contained: blob statements keep the table 'in use' on their own
+    # connection, so create/drop happen via separate fresh connections
+    table = "TEST_FAST_FBSQL_BLOB"
+    drop_table_fresh(table)
+    setup = fast_firebirdsql.connect(**DB_CONFIG)
+    scur = setup.cursor()
+    scur.execute(f"CREATE TABLE {table} (ID INTEGER, TXT BLOB SUB_TYPE TEXT, BIN BLOB SUB_TYPE 0)")
+    setup.commit()
+    setup.close()
+
+    text_val = "Ein längerer Text mit Umlauten äöü " * 100
+    bin_val = bytes(range(256)) * 200  # 51 KB, larger than one blob segment
+    conn = fast_firebirdsql.connect(**DB_CONFIG)
+    try:
+        cur = conn.cursor()
+        cur.execute(f"INSERT INTO {table} (ID, TXT, BIN) VALUES (?, ?, ?)", (1, text_val, bin_val))
+        conn.commit()
+        cur.execute(f"SELECT TXT, BIN FROM {table}")
+        row = cur.fetchall()[0]
+        assert row[0] == text_val and isinstance(row[0], str)
+        assert row[1] == bin_val and isinstance(row[1], bytes)
+    finally:
+        conn.close()
+        drop_table_fresh(table)
 
 
 @requires_write

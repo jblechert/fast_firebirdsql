@@ -46,6 +46,24 @@ requires_write = pytest.mark.skipif(
 )
 
 
+def drop_table_fresh(name):
+    """Drop a table via its own fresh connection.
+
+    Dropping on a connection that has prepared statements on the table can
+    fail with 'object TABLE ... is in use' (rsfbclient caches statements).
+    """
+    c = fast_firebirdsql.connect(**DB_CONFIG)
+    try:
+        cur = c.cursor()
+        try:
+            cur.execute(f"DROP TABLE {name}")
+            c.commit()
+        except RuntimeError:
+            c.rollback()
+    finally:
+        c.close()
+
+
 @pytest.fixture
 def conn():
     connection = fast_firebirdsql.connect(**DB_CONFIG)

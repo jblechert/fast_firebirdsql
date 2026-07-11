@@ -44,9 +44,11 @@ into SQL strings.
   codes are filled in.
 - `decimal.Decimal` parameters are not supported (convert to `str` or
   `float`); NUMERIC columns come back as `float`.
-- **BLOB columns cannot be read** (`Unsupported column type (520 ...)`),
-  a limitation of rsfbclient's native client. Select around them or cast
-  (`CAST(blob_col AS VARCHAR(...))`).
+- BLOB columns work since v0.6.1: `BLOB SUB_TYPE TEXT` maps to `str`,
+  `BLOB SUB_TYPE 0` (binary) to `bytes` — both directions. Only internal
+  BLR metadata blobs (subtype 2, e.g. `RDB$VIEW_BLR`) cannot be read, so
+  `SELECT *` on some system tables fails with
+  `Unsupported column type (520 2)`.
 - Statements are routed by their first keyword: only `SELECT`/`WITH`
   return result rows.
 - **Build currently requires Python ≤ 3.13** (PyO3 0.22). Production runs
