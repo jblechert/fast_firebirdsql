@@ -4,7 +4,7 @@ build-backend = "maturin"
 
 [project]
 name = "fast_firebirdsql"
-version = "0.3.2"
+version = "0.5.1"
 description = "Fast Firebird database queries using Rust - firebirdsql compatible"
 authors = [
     {name = "Your Name", email = "your.email@example.com"}

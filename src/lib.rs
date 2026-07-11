@@ -1294,8 +1294,8 @@ fn fast_firebirdsql(_py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<FirebirdConnection>()?;
     m.add_class::<FirebirdCursor>()?;
 
-    // Add version information
-    m.add("__version__", "0.3.2")?;
+    // Add version information (single source of truth: Cargo.toml)
+    m.add("__version__", env!("CARGO_PKG_VERSION"))?;
 
     Ok(())
 }
