@@ -54,25 +54,25 @@ dev-install: build-dev
 # Test commands
 test: dev-install
 	@echo "🧪 Running basic functionality tests..."
-	python test_imports.py
-	python test_firebirdsql_compatibility.py
-	python test_v0_2_0.py
+	python tests/test_imports.py
+	python tests/test_firebirdsql_compatibility.py
+	python tests/test_v0_2_0.py
 
 test-performance: dev-install
 	@echo "🚀 Running comprehensive performance tests..."
-	python run_performance_tests.py
+	python benchmarks/run_performance_tests.py
 
 test-ci: dev-install
 	@echo "⚡ Running CI performance tests..."
-	python run_performance_tests.py --baseline performance_baseline.json
+	python benchmarks/run_performance_tests.py --baseline benchmarks/performance_baseline.json
 
 benchmark: dev-install
 	@echo "📊 Running full benchmark suite..."
-	python benchmark_suite.py
+	python benchmarks/benchmark_suite.py
 
 create-baseline: dev-install
 	@echo "💾 Creating new performance baseline..."
-	python run_performance_tests.py --create-baseline
+	python benchmarks/run_performance_tests.py --create-baseline --baseline benchmarks/performance_baseline.json
 
 # Maintenance commands
 clean:
@@ -94,7 +94,7 @@ dev-setup:
 # Performance monitoring
 monitor-performance:
 	@echo "📈 Starting performance monitoring..."
-	python performance_monitor.py
+	python benchmarks/performance_monitor.py
 
 # Run all tests in sequence
 test-all: test test-performance
