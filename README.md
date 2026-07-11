@@ -35,12 +35,16 @@ Read this before relying on the "drop-in" claim:
 
 ## Building
 
-Requires Rust, [maturin](https://www.maturin.rs) and a Firebird client
-library (`fbclient`) on the system.
+Requires Rust, [uv](https://docs.astral.sh/uv/) (provides maturin via
+`uvx`) and a Firebird client library (`libfbclient`) on the system.
+The Makefile targets the production venv (Python 3.13) at
+`/home/mjb/src/bstools-venv` by default; override with
+`make VENV=/path/to/venv ...`.
 
 ```bash
-make dev-install   # maturin develop (debug)
-make install       # maturin develop --release
+make dev-install   # build (debug) and install into the venv
+make install       # build (release) and install into the venv
+make wheel         # build a portable manylinux wheel into dist/
 make test          # basic functionality tests (needs a reachable database)
 make benchmark     # full benchmark suite
 ```

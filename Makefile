@@ -1,6 +1,13 @@
 # Makefile for fast_firebirdsql development and testing
 
-.PHONY: help build test test-performance test-ci benchmark clean install dev-install
+# Target environment: the production venv (Python 3.13).
+# Override with e.g. `make PYTHON=python3 VENV=/path/to/venv ...`
+VENV    ?= /home/mjb/src/bstools-venv
+PYTHON  ?= $(VENV)/bin/python
+# patchelf only for portable wheels (make wheel); develop installs link system libs
+MATURIN ?= VIRTUAL_ENV=$(VENV) uvx maturin
+
+.PHONY: help build build-dev check lint install dev-install test test-performance test-ci benchmark create-baseline clean dev-setup monitor-performance test-all dev release-check
 
 # Default target
 help:
@@ -10,8 +17,8 @@ help:
 	@echo "Build commands:"
 	@echo "  build              Build the Rust extension in release mode"
 	@echo "  build-dev          Build the Rust extension in debug mode"
-	@echo "  install            Install the package using maturin"
-	@echo "  dev-install        Install in development mode"
+	@echo "  install            Build and install into the venv (release)"
+	@echo "  dev-install        Build and install into the venv (debug)"
 	@echo ""
 	@echo "Test commands:"
 	@echo "  test               Run all basic tests"
@@ -43,36 +50,43 @@ lint:
 	cargo clippy -- -D warnings
 
 # Installation commands
-install: build
-	@echo "📦 Installing fast_firebirdsql..."
-	maturin develop --release
+install:
+	@echo "📦 Installing fast_firebirdsql (release) into $(VENV)..."
+	$(MATURIN) develop --uv --release
 
-dev-install: build-dev
-	@echo "📦 Installing fast_firebirdsql in development mode..."
-	maturin develop
+dev-install:
+	@echo "📦 Installing fast_firebirdsql (debug) into $(VENV)..."
+	$(MATURIN) develop --uv
+
+wheel:
+	@echo "🎡 Building portable release wheel into dist/..."
+	VIRTUAL_ENV=$(VENV) uvx --with patchelf maturin build --release -o dist -i $(PYTHON)
+	@# patchelf mangles the cached .so in target/ in place; force a relink
+	@# so a later `make install` does not pick up the mangled library
+	@touch src/lib.rs
 
 # Test commands
 test: dev-install
 	@echo "🧪 Running basic functionality tests..."
-	python tests/test_imports.py
-	python tests/test_firebirdsql_compatibility.py
-	python tests/test_v0_2_0.py
+	$(PYTHON) tests/test_imports.py
+	$(PYTHON) tests/test_firebirdsql_compatibility.py
+	$(PYTHON) tests/test_rename.py
 
 test-performance: dev-install
 	@echo "🚀 Running comprehensive performance tests..."
-	python benchmarks/run_performance_tests.py
+	$(PYTHON) benchmarks/run_performance_tests.py
 
 test-ci: dev-install
 	@echo "⚡ Running CI performance tests..."
-	python benchmarks/run_performance_tests.py --baseline benchmarks/performance_baseline.json
+	$(PYTHON) benchmarks/run_performance_tests.py --baseline benchmarks/performance_baseline.json
 
 benchmark: dev-install
 	@echo "📊 Running full benchmark suite..."
-	python benchmarks/benchmark_suite.py
+	$(PYTHON) benchmarks/benchmark_suite.py
 
 create-baseline: dev-install
 	@echo "💾 Creating new performance baseline..."
-	python benchmarks/run_performance_tests.py --create-baseline --baseline benchmarks/performance_baseline.json
+	$(PYTHON) benchmarks/run_performance_tests.py --create-baseline --baseline benchmarks/performance_baseline.json
 
 # Maintenance commands
 clean:
@@ -80,21 +94,14 @@ clean:
 	cargo clean
 	rm -rf target/
 	rm -rf build/
-	rm -rf dist/
 	rm -f *.so
 	rm -f benchmark_results_*.json
 	rm -f ci_benchmark_results_*.json
 
-# Development workflow
-dev-setup:
-	@echo "🛠️  Setting up development environment..."
-	pip install maturin psutil
-	$(MAKE) dev-install
-
 # Performance monitoring
 monitor-performance:
 	@echo "📈 Starting performance monitoring..."
-	python benchmarks/performance_monitor.py
+	$(PYTHON) benchmarks/performance_monitor.py
 
 # Run all tests in sequence
 test-all: test test-performance
@@ -105,5 +112,5 @@ dev: clean dev-install test
 	@echo "🎉 Development cycle completed!"
 
 # Release preparation
-release-check: clean build install test test-performance
+release-check: clean install test test-performance
 	@echo "🚀 Release checks completed!"

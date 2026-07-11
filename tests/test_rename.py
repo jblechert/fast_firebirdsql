@@ -18,9 +18,9 @@ def test_import_and_version():
         print(f"✅ Successfully imported fast_firebirdsql")
         print(f"✅ Version: {fast_firebirdsql.__version__}")
         
-        # Verify version is 0.3.0
-        assert fast_firebirdsql.__version__ == "0.3.0", f"Expected version 0.3.0, got {fast_firebirdsql.__version__}"
-        print("✅ Version correctly updated to 0.3.0")
+        # Verify a version string is exposed (single source: Cargo.toml)
+        assert fast_firebirdsql.__version__, "Expected a non-empty __version__"
+        print(f"✅ Version exposed: {fast_firebirdsql.__version__}")
         
         # Test that all expected functions are available
         expected_functions = [
