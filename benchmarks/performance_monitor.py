@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Performance monitoring utilities for fast_firebird.
+Performance monitoring utilities for fast_firebirdsql.
 Provides comprehensive performance testing and benchmarking capabilities.
 """
 
@@ -10,7 +10,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from db_config import DB_CONFIG
 
-import fast_firebird
+import fast_firebirdsql
 import time
 import psutil
 import statistics
@@ -36,7 +36,7 @@ class BenchmarkResult:
 
 
 class PerformanceMonitor:
-    """Comprehensive performance monitoring for fast_firebird"""
+    """Comprehensive performance monitoring for fast_firebirdsql"""
     
     def __init__(self, connection_params: Dict[str, Any]):
         self.connection_params = connection_params
@@ -61,7 +61,7 @@ class PerformanceMonitor:
         for i in range(iterations):
             with self.measure_memory():
                 start = time.perf_counter()
-                conn = fast_firebird.connect(**self.connection_params)
+                conn = fast_firebirdsql.connect(**self.connection_params)
                 conn.close()
                 end = time.perf_counter()
             
@@ -93,7 +93,7 @@ class PerformanceMonitor:
         print(f"Benchmarking {description} ({iterations} iterations)...")
         
         # Establish connection once
-        conn = fast_firebird.connect(**self.connection_params)
+        conn = fast_firebirdsql.connect(**self.connection_params)
         cur = conn.cursor()
         
         times = []
@@ -155,7 +155,7 @@ class PerformanceMonitor:
             with self.measure_memory():
                 start = time.perf_counter()
                 
-                conn = fast_firebird.connect(**self.connection_params)
+                conn = fast_firebirdsql.connect(**self.connection_params)
                 cur = conn.cursor()
                 
                 iteration_rows = 0
@@ -270,11 +270,11 @@ def run_comprehensive_benchmark():
     monitor.print_results()
     monitor.save_results(f"benchmark_results_{int(time.time())}.json")
     
-    # Show fast_firebird internal metrics
+    # Show fast_firebirdsql internal metrics
     print("\n" + "="*80)
     print("FAST_FIREBIRD INTERNAL METRICS")
     print("="*80)
-    stats = fast_firebird.get_performance_stats()
+    stats = fast_firebirdsql.get_performance_stats()
     for operation, metrics in stats.items():
         print(f"\n{operation.upper()}:")
         for key, value in metrics.items():

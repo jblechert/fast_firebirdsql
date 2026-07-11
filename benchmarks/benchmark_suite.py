@@ -38,7 +38,7 @@ class BenchmarkResult:
     memory_usage_mb: float
     rows_per_second: float
     timestamp: str
-    version: str = "0.2.0"
+    version: str = fast_firebirdsql.__version__
 
 
 @dataclass

@@ -93,6 +93,10 @@ benchmark: dev-install
 	@echo "📊 Running full benchmark suite..."
 	$(PYTHON) benchmarks/benchmark_suite.py
 
+compare: dev-install
+	@echo "⚖️  Comparing against pure-Python firebirdsql..."
+	$(PYTHON) benchmarks/compare_drivers.py
+
 create-baseline: dev-install
 	@echo "💾 Creating new performance baseline..."
 	$(PYTHON) benchmarks/run_performance_tests.py --create-baseline --baseline benchmarks/performance_baseline.json
