@@ -4,6 +4,12 @@ Test script for type conversion performance optimizations.
 Tests the optimized sqltype_to_python function and caching mechanisms.
 """
 
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from db_config import DB_CONFIG
+
 import fast_firebird
 import time
 import gc
@@ -13,13 +19,7 @@ def test_type_conversion_performance():
     print("=== Type Conversion Performance Test ===\n")
     
     # Connection parameters
-    connection_params = {
-        "host": "192.0.2.10",
-        "database": "d:\\data\\example.fdb",
-        "port": 3050,
-        "user": "EXAMPLE_USER",
-        "password": "REDACTED",
-    }
+    connection_params = dict(DB_CONFIG)
     
     conn = fast_firebird.connect(**connection_params)
     

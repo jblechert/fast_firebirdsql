@@ -3,6 +3,12 @@
 Detailed Performance Analysis: Understanding the performance characteristics
 """
 
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from db_config import DB_CONFIG
+
 import time
 import gc
 
@@ -16,11 +22,7 @@ def test_large_dataset_performance():
     import fast_firebirdsql
     
     conn = fast_firebirdsql.connect(
-        host="192.0.2.10",
-        database="d:\\data\\example.fdb",
-        port=3050,
-        user="EXAMPLE_USER",
-        password="REDACTED"
+        **DB_CONFIG
     )
     cur = conn.cursor()
     
@@ -42,11 +44,7 @@ def test_large_dataset_performance():
     import firebirdsql
     
     conn = firebirdsql.connect(
-        host="192.0.2.10",
-        database="d:\\data\\example.fdb",
-        port=3050,
-        user="EXAMPLE_USER",
-        password="REDACTED"
+        **DB_CONFIG
     )
     cur = conn.cursor()
     
@@ -78,11 +76,7 @@ def test_large_dataset_performance():
     for i in range(5):
         start_time = time.time()
         conn = fast_firebirdsql.connect(
-            host="192.0.2.10",
-            database="d:\\data\\example.fdb",
-            port=3050,
-            user="EXAMPLE_USER",
-            password="REDACTED"
+            **DB_CONFIG
         )
         conn.close()
         times.append(time.time() - start_time)
@@ -93,11 +87,7 @@ def test_large_dataset_performance():
     for i in range(5):
         start_time = time.time()
         conn = firebirdsql.connect(
-            host="192.0.2.10",
-            database="d:\\data\\example.fdb",
-            port=3050,
-            user="EXAMPLE_USER",
-            password="REDACTED"
+            **DB_CONFIG
         )
         conn.close()
         times.append(time.time() - start_time)
@@ -125,11 +115,7 @@ def test_query_patterns():
     
     # fast_firebirdsql
     conn = fast_firebirdsql.connect(
-        host="192.0.2.10",
-        database="d:\\data\\example.fdb",
-        port=3050,
-        user="EXAMPLE_USER",
-        password="REDACTED"
+        **DB_CONFIG
     )
     cur = conn.cursor()
     
@@ -142,11 +128,7 @@ def test_query_patterns():
     
     # standard firebirdsql
     conn = firebirdsql.connect(
-        host="192.0.2.10",
-        database="d:\\data\\example.fdb",
-        port=3050,
-        user="EXAMPLE_USER",
-        password="REDACTED"
+        **DB_CONFIG
     )
     cur = conn.cursor()
     

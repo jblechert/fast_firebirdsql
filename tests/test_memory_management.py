@@ -4,6 +4,12 @@ Test script for memory management optimization features.
 Tests the new fetchone, fetchmany methods and streaming capabilities.
 """
 
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from db_config import DB_CONFIG
+
 import fast_firebird
 import time
 import gc
@@ -20,13 +26,7 @@ def test_memory_management():
     print("=== Memory Management Optimization Test ===\n")
     
     # Connection parameters
-    connection_params = {
-        "host": "192.0.2.10",
-        "database": "d:\\data\\example.fdb",
-        "port": 3050,
-        "user": "EXAMPLE_USER",
-        "password": "REDACTED",
-    }
+    connection_params = dict(DB_CONFIG)
     
     # Test 1: Traditional fetchall vs new fetchone/fetchmany
     print("Test 1: Memory usage comparison")

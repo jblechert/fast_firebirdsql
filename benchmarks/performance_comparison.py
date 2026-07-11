@@ -4,6 +4,12 @@ Performance Comparison: fast_firebirdsql vs standard firebirdsql
 Direct head-to-head performance testing with the same queries and data.
 """
 
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from db_config import DB_CONFIG
+
 import time
 import sys
 import gc
@@ -26,11 +32,7 @@ def test_fast_firebirdsql():
     # Connection test
     start_time = time.time()
     conn = fast_firebirdsql.connect(
-        host="192.0.2.10",
-        database="d:\\data\\example.fdb",
-        port=3050,
-        user="EXAMPLE_USER",
-        password="REDACTED"
+        **DB_CONFIG
     )
     connection_time = time.time() - start_time
     results['connection_time'] = connection_time
@@ -88,11 +90,7 @@ def test_standard_firebirdsql():
     # Connection test
     start_time = time.time()
     conn = firebirdsql.connect(
-        host="192.0.2.10",
-        database="d:\\data\\example.fdb",
-        port=3050,
-        user="EXAMPLE_USER",
-        password="REDACTED"
+        **DB_CONFIG
     )
     connection_time = time.time() - start_time
     results['connection_time'] = connection_time

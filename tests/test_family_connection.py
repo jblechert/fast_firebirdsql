@@ -3,6 +3,12 @@
 Test connection to the family.fdb database
 """
 
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from db_config import DB_CONFIG
+
 import fast_firebirdsql
 import sys
 
@@ -17,27 +23,7 @@ def test_family_connection():
         
         # Try different connection parameters
         connection_params = [
-            {
-                'host': '192.0.2.10',
-                'database': 'd:\\data\\example.fdb',
-                'port': 3050,
-                'user': 'EXAMPLE_USER',
-                'password': 'REDACTED'
-            },
-            {
-                'host': '192.0.2.10',
-                'database': 'd:/data/example.fdb',
-                'port': 3050,
-                'user': 'EXAMPLE_USER',
-                'password': 'REDACTED'
-            },
-            {
-                'host': '192.0.2.10',
-                'database': 'd:\\data\\example.fdb',
-                'port': 3050,
-                'user': 'SYSDBA',
-                'password': 'masterkey'
-            }
+            dict(DB_CONFIG)
         ]
         
         for i, params in enumerate(connection_params, 1):

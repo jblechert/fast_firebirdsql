@@ -4,6 +4,12 @@ Test script for query optimization features in fast_firebird.
 Tests query caching, optimization statistics, and performance improvements.
 """
 
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from db_config import DB_CONFIG
+
 import fast_firebird
 import time
 import sys
@@ -13,13 +19,7 @@ def test_query_optimization():
     print("=== Testing Query Optimization Features ===")
     
     # Connection parameters
-    connection_params = {
-        "host": "192.0.2.10",
-        "database": "d:\\data\\example.fdb",
-        "port": 3050,
-        "user": "EXAMPLE_USER",
-        "password": "REDACTED"
-    }
+    connection_params = dict(DB_CONFIG)
     
     try:
         # Clear any existing optimization stats
@@ -124,13 +124,7 @@ def test_performance_comparison():
     """Compare performance with and without optimization"""
     print("\n=== Performance Comparison Test ===")
     
-    connection_params = {
-        "host": "192.0.2.10",
-        "database": "d:\\data\\example.fdb",
-        "port": 3050,
-        "user": "EXAMPLE_USER",
-        "password": "REDACTED"
-    }
+    connection_params = dict(DB_CONFIG)
     
     try:
         # Clear stats

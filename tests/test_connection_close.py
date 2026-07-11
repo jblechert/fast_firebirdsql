@@ -9,6 +9,12 @@ This test specifically verifies that:
 4. The connection state is properly managed
 """
 
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from db_config import DB_CONFIG
+
 import fast_firebirdsql
 import sys
 import traceback
@@ -21,20 +27,7 @@ def test_connection_close():
     
     # Connection parameters - try multiple options
     connection_params_list = [
-        {
-            'host': '192.0.2.10',
-            'database': 'd:\\data\\example.fdb',
-            'port': 3050,
-            'user': 'EXAMPLE_USER',
-            'password': 'REDACTED'
-        },
-        {
-            'host': '192.0.2.10',
-            'database': 'bstools.fdb',
-            'port': 3050,
-            'user': 'SYSDBA',
-            'password': 'masterkey'
-        }
+        dict(DB_CONFIG)
     ]
     
     connection_params = None

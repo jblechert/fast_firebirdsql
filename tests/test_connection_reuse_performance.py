@@ -5,6 +5,12 @@ This script tests the performance before and after connection reuse implementati
 """
 
 import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from db_config import DB_CONFIG
+
+import sys
 import os
 import time
 
@@ -20,11 +26,11 @@ except ImportError as e:
     sys.exit(1)
 
 # Database connection parameters - using the user's actual database
-HOST = "192.0.2.10"
-DATABASE = "d:\\data\\example.fdb"
-PORT = 3050
-USER = "EXAMPLE_USER"
-PASSWORD = "REDACTED"
+HOST = DB_CONFIG["host"]
+DATABASE = DB_CONFIG["database"]
+PORT = DB_CONFIG["port"]
+USER = DB_CONFIG["user"]
+PASSWORD = DB_CONFIG["password"]
 
 def test_connection_reuse():
     """Test connection reuse performance"""

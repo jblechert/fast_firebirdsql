@@ -4,8 +4,13 @@ Test script for Windows UPDATE operations to verify the crash fix.
 This script tests both SELECT and UPDATE operations to ensure they work correctly.
 """
 
-import fast_firebirdsql
 import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from db_config import DB_CONFIG
+
+import fast_firebirdsql
 import traceback
 
 def test_connection_and_updates():
@@ -14,14 +19,8 @@ def test_connection_and_updates():
     print("=== Windows UPDATE Test ===")
     print("Testing fast_firebirdsql UPDATE operations on Windows...")
     
-    # Connection parameters - replace with your actual database details
-    connection_params = {
-        'host': 'localhost',  # Replace with your host
-        'database': 'your_database.fdb',  # Replace with your database
-        'port': 3050,
-        'user': 'SYSDBA',  # Replace with your user
-        'password': 'masterkey'  # Replace with your password
-    }
+    # Connection parameters come from .env / environment (see db_config.py)
+    connection_params = dict(DB_CONFIG)
     
     try:
         # Test connection

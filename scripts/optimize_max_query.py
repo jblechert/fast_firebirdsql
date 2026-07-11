@@ -4,6 +4,12 @@ Optimize the MAX(GEAENDERT_AM) query by addressing performance bottlenecks
 in the fast_firebirdsql implementation.
 """
 
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from db_config import DB_CONFIG
+
 import fast_firebirdsql
 import time
 import sys
@@ -12,13 +18,7 @@ def test_current_performance():
     """Test current performance of the MAX query"""
     print("=== Current Performance Analysis ===")
     
-    connection_params = {
-        "host": "192.0.2.10",
-        "database": "d:\\data\\example.fdb",
-        "port": 3050,
-        "user": "EXAMPLE_USER",
-        "password": "REDACTED"
-    }
+    connection_params = dict(DB_CONFIG)
     
     try:
         conn = fast_firebirdsql.connect(**connection_params)
@@ -55,13 +55,7 @@ def test_high_performance_mode():
     """Test with high-performance mode enabled"""
     print("\n=== High-Performance Mode Test ===")
     
-    connection_params = {
-        "host": "192.0.2.10",
-        "database": "d:\\data\\example.fdb",
-        "port": 3050,
-        "user": "EXAMPLE_USER",
-        "password": "REDACTED"
-    }
+    connection_params = dict(DB_CONFIG)
     
     try:
         conn = fast_firebirdsql.connect(**connection_params)
@@ -99,13 +93,7 @@ def test_ultra_fast_execution():
     """Test with ultra-fast execution method"""
     print("\n=== Ultra-Fast Execution Test ===")
     
-    connection_params = {
-        "host": "192.0.2.10",
-        "database": "d:\\data\\example.fdb",
-        "port": 3050,
-        "user": "EXAMPLE_USER",
-        "password": "REDACTED"
-    }
+    connection_params = dict(DB_CONFIG)
     
     try:
         conn = fast_firebirdsql.connect(**connection_params)
@@ -146,13 +134,7 @@ def test_connection_reuse():
     """Test performance with connection reuse simulation"""
     print("\n=== Connection Reuse Simulation ===")
     
-    connection_params = {
-        "host": "192.0.2.10",
-        "database": "d:\\data\\example.fdb",
-        "port": 3050,
-        "user": "EXAMPLE_USER",
-        "password": "REDACTED"
-    }
+    connection_params = dict(DB_CONFIG)
     
     try:
         # Create connection once
@@ -193,13 +175,7 @@ def compare_with_standard_firebirdsql():
     try:
         import firebirdsql
         
-        connection_params = {
-            "host": "192.0.2.10",
-            "database": "d:\\data\\example.fdb",
-            "port": 3050,
-            "user": "EXAMPLE_USER",
-            "password": "REDACTED"
-        }
+        connection_params = dict(DB_CONFIG)
         
         # Test standard firebirdsql
         conn = firebirdsql.connect(**connection_params)

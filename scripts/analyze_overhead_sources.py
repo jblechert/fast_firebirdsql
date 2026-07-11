@@ -3,6 +3,12 @@
 Analyze where the performance difference between fast_firebirdsql and firebirdsql really comes from.
 """
 
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from db_config import DB_CONFIG
+
 import time
 import sys
 
@@ -10,13 +16,7 @@ def test_connection_overhead():
     """Test just the connection creation overhead"""
     print("=== Connection Creation Overhead Analysis ===")
     
-    connection_params = {
-        "host": "192.0.2.10",
-        "database": "d:\\data\\example.fdb",
-        "port": 3050,
-        "user": "EXAMPLE_USER",
-        "password": "REDACTED"
-    }
+    connection_params = dict(DB_CONFIG)
     
     # Test fast_firebirdsql connection overhead
     print("\n1. fast_firebirdsql connection overhead:")
@@ -72,13 +72,7 @@ def test_query_execution_overhead():
     """Test the query execution overhead (excluding connection)"""
     print("\n=== Query Execution Overhead Analysis ===")
     
-    connection_params = {
-        "host": "192.0.2.10",
-        "database": "d:\\data\\example.fdb",
-        "port": 3050,
-        "user": "EXAMPLE_USER",
-        "password": "REDACTED"
-    }
+    connection_params = dict(DB_CONFIG)
     
     query = "SELECT MAX(GEAENDERT_AM) FROM AUFPOS"
     
@@ -150,13 +144,7 @@ def test_rust_python_overhead():
     """Test the Rust-Python conversion overhead"""
     print("\n=== Rust-Python Conversion Overhead Analysis ===")
     
-    connection_params = {
-        "host": "192.0.2.10",
-        "database": "d:\\data\\example.fdb",
-        "port": 3050,
-        "user": "EXAMPLE_USER",
-        "password": "REDACTED"
-    }
+    connection_params = dict(DB_CONFIG)
     
     # Test with different query types to see conversion overhead
     queries = [

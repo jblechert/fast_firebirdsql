@@ -7,6 +7,12 @@ Verifies that:
 3. Version is correctly updated
 """
 
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from db_config import DB_CONFIG
+
 import fast_firebird
 
 def test_version():
@@ -20,11 +26,7 @@ def test_old_interface_removed():
     print("\nTesting that old query() method is removed...")
     
     conn = fast_firebird.connect(
-        host="192.0.2.10",
-        database="d:\\data\\example.fdb",
-        port=3050,
-        user="EXAMPLE_USER",
-        password="REDACTED"
+        **DB_CONFIG
     )
     
     # Try to use the old query method - should fail
@@ -44,11 +46,7 @@ def test_new_interface():
     
     # Connect
     conn = fast_firebird.connect(
-        host="192.0.2.10",
-        database="d:\\data\\example.fdb",
-        port=3050,
-        user="EXAMPLE_USER",
-        password="REDACTED"
+        **DB_CONFIG
     )
     
     # Create cursor

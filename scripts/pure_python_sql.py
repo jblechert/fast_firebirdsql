@@ -1,14 +1,16 @@
 
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from db_config import DB_CONFIG
+
 import firebirdsql
 import time
 
 start_time = time.time()
 conn = firebirdsql.connect(
-            host="192.0.2.10",  # 192.0.2.10 - example-server
-            database="d:\\data\\example.fdb",
-            port=3050,
-            user="EXAMPLE_USER",
-            password="REDACTED",
+            **DB_CONFIG,
         )
 cur = conn.cursor()
 

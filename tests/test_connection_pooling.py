@@ -4,6 +4,12 @@ Test connection pooling performance improvements.
 This test verifies that connection reuse eliminates connection overhead.
 """
 
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from db_config import DB_CONFIG
+
 import fast_firebird
 import time
 
@@ -12,13 +18,7 @@ def test_connection_pooling():
     print("Testing Connection Pooling Performance")
     print("=" * 60)
     
-    connection_params = {
-        "host": "192.0.2.10",
-        "database": "d:\\data\\example.fdb",
-        "port": 3050,
-        "user": "EXAMPLE_USER",
-        "password": "REDACTED"
-    }
+    connection_params = dict(DB_CONFIG)
     
     # Clear any existing metrics
     fast_firebird.clear_performance_stats()
@@ -135,13 +135,7 @@ def test_connection_overhead_comparison():
     print("CONNECTION OVERHEAD COMPARISON")
     print("=" * 60)
     
-    connection_params = {
-        "host": "192.0.2.10",
-        "database": "d:\\data\\example.fdb",
-        "port": 3050,
-        "user": "EXAMPLE_USER",
-        "password": "REDACTED"
-    }
+    connection_params = dict(DB_CONFIG)
     
     # Clear metrics
     fast_firebird.clear_performance_stats()

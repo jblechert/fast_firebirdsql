@@ -3,8 +3,14 @@
 Test connection to the bstools.fdb database
 """
 
-import fast_firebirdsql
 import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from db_config import DB_CONFIG
+
+import fast_firebirdsql
+import os
 
 def test_bstools_connection():
     """Test connection to the bstools database"""
@@ -15,54 +21,14 @@ def test_bstools_connection():
         # Try to connect to the database
         print("Attempting to connect to d:\\data\\tools.fdb...")
         
-        # Try different connection parameters and database paths
+        # Same server/credentials as the main config, different database file
+        bstools_database = os.environ.get("FIREBIRD_BSTOOLS_DATABASE", "d:\\data\\tools.fdb")
         connection_params = [
-            {
-                'host': '192.0.2.10',
-                'database': 'd:\\data\\tools.fdb',
-                'port': 3050,
-                'user': 'SYSDBA',
-                'password': 'masterkey'
-            },
-            {
-                'host': '192.0.2.10',
-                'database': 'd:/data/tools.fdb',
-                'port': 3050,
-                'user': 'SYSDBA',
-                'password': 'masterkey'
-            },
-            {
-                'host': '192.0.2.10',
-                'database': 'c:\\data\\tools.fdb',
-                'port': 3050,
-                'user': 'SYSDBA',
-                'password': 'masterkey'
-            },
-            {
-                'host': '192.0.2.10',
-                'database': 'c:/data/tools.fdb',
-                'port': 3050,
-                'user': 'SYSDBA',
-                'password': 'masterkey'
-            },
-            {
-                'host': '192.0.2.10',
-                'database': '\\\\192.0.2.10\\d$\\data\\tools.fdb',
-                'port': 3050,
-                'user': 'SYSDBA',
-                'password': 'masterkey'
-            },
-            {
-                'host': '192.0.2.10',
-                'database': 'bstools.fdb',
-                'port': 3050,
-                'user': 'SYSDBA',
-                'password': 'masterkey'
-            }
+            {**DB_CONFIG, 'database': bstools_database}
         ]
-        
+
         for i, params in enumerate(connection_params, 1):
-            print(f"\nAttempt {i}: {params}")
+            print(f"\nAttempt {i}: database={params['database']}")
             try:
                 conn = fast_firebirdsql.connect(**params)
                 print("✅ Connection successful!")

@@ -4,8 +4,13 @@ Test script for commit() and rollback() methods compatibility.
 This verifies that the firebirdsql compatibility methods work correctly.
 """
 
-import fast_firebirdsql
 import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from db_config import DB_CONFIG
+
+import fast_firebirdsql
 import traceback
 
 def test_commit_rollback_compatibility():
@@ -14,14 +19,8 @@ def test_commit_rollback_compatibility():
     print("=== Commit/Rollback Compatibility Test ===")
     print("Testing fast_firebirdsql commit() and rollback() methods...")
     
-    # Connection parameters - replace with your actual database details
-    connection_params = {
-        'host': 'localhost',  # Replace with your host
-        'database': 'your_database.fdb',  # Replace with your database
-        'port': 3050,
-        'user': 'SYSDBA',  # Replace with your user
-        'password': 'masterkey'  # Replace with your password
-    }
+    # Connection parameters come from .env / environment (see db_config.py)
+    connection_params = dict(DB_CONFIG)
     
     try:
         # Test connection
@@ -181,13 +180,7 @@ def test_firebirdsql_compatibility_example():
     
     try:
         # This is how firebirdsql code typically looks
-        conn = fast_firebirdsql.connect(
-            host='localhost',
-            database='your_database.fdb',
-            port=3050,
-            user='SYSDBA',
-            password='masterkey'
-        )
+        conn = fast_firebirdsql.connect(**DB_CONFIG)
         
         cur = conn.cursor()
         

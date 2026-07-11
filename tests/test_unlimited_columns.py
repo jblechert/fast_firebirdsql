@@ -1,3 +1,9 @@
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from db_config import DB_CONFIG
+
 import fast_firebird
 import time
 
@@ -12,11 +18,7 @@ def test_query(description, sql, expected_columns):
         
         # Connect to database
         conn = fast_firebird.connect(
-            host="192.0.2.10",
-            database="d:\\data\\example.fdb",
-            port=3050,
-            user="EXAMPLE_USER",
-            password="REDACTED"
+            **DB_CONFIG
         )
         
         # Execute query using cursor/execute/fetchall

@@ -6,6 +6,12 @@ Suitable for CI/CD integration.
 """
 
 import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from db_config import DB_CONFIG
+
+import sys
 import os
 import time
 import subprocess
@@ -51,11 +57,7 @@ class PerformanceTestRunner:
 
             # Test connection
             conn = fast_firebirdsql.connect(
-                host="192.0.2.10",
-                database="d:\\data\\example.fdb",
-                port=3050,
-                user="EXAMPLE_USER",
-                password="REDACTED"
+                **DB_CONFIG
             )
             
             # Test cursor creation and simple query
@@ -94,13 +96,7 @@ class PerformanceTestRunner:
             # Import and run benchmark suite
             from benchmark_suite import PerformanceBenchmarkSuite
             
-            connection_params = {
-                "host": "192.0.2.10",
-                "database": "d:\\data\\example.fdb",
-                "port": 3050,
-                "user": "EXAMPLE_USER",
-                "password": "REDACTED"
-            }
+            connection_params = dict(DB_CONFIG)
             
             # Create suite with baseline if available
             baseline_path = self.baseline_file if os.path.exists(self.baseline_file) else None
@@ -176,11 +172,7 @@ class PerformanceTestRunner:
             # Run multiple connection cycles
             for i in range(20):
                 conn = fast_firebirdsql.connect(
-                    host="192.0.2.10",
-                    database="d:\\data\\example.fdb",
-                    port=3050,
-                    user="EXAMPLE_USER",
-                    password="REDACTED"
+                    **DB_CONFIG
                 )
                 
                 cur = conn.cursor()

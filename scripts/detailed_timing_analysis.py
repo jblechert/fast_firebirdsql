@@ -3,6 +3,12 @@
 Detailed timing analysis to understand where exactly the time is spent.
 """
 
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from db_config import DB_CONFIG
+
 import fast_firebirdsql
 import firebirdsql
 import time
@@ -11,13 +17,7 @@ def analyze_fast_firebirdsql():
     """Analyze timing breakdown for fast_firebirdsql"""
     print("=== fast_firebirdsql Timing Analysis ===")
     
-    connection_params = {
-        "host": "192.0.2.10",
-        "database": "d:\\data\\example.fdb",
-        "port": 3050,
-        "user": "EXAMPLE_USER",
-        "password": "REDACTED"
-    }
+    connection_params = dict(DB_CONFIG)
     
     # Test connection creation time
     print("1. Connection creation time:")
@@ -79,13 +79,7 @@ def analyze_standard_firebirdsql():
     print("\n=== Standard firebirdsql Timing Analysis ===")
     
     try:
-        connection_params = {
-            "host": "192.0.2.10",
-            "database": "d:\\data\\example.fdb",
-            "port": 3050,
-            "user": "EXAMPLE_USER",
-            "password": "REDACTED"
-        }
+        connection_params = dict(DB_CONFIG)
         
         # Test connection creation time
         print("1. Connection creation time:")
@@ -150,13 +144,7 @@ def test_connection_reuse_hypothesis():
     """Test if fast_firebirdsql really creates new connections for each execute"""
     print("\n=== Connection Reuse Test ===")
     
-    connection_params = {
-        "host": "192.0.2.10",
-        "database": "d:\\data\\example.fdb",
-        "port": 3050,
-        "user": "EXAMPLE_USER",
-        "password": "REDACTED"
-    }
+    connection_params = dict(DB_CONFIG)
     
     conn = fast_firebirdsql.connect(**connection_params)
     cur = conn.cursor()

@@ -4,6 +4,12 @@ Performance monitoring utilities for fast_firebird.
 Provides comprehensive performance testing and benchmarking capabilities.
 """
 
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from db_config import DB_CONFIG
+
 import fast_firebird
 import time
 import psutil
@@ -233,13 +239,7 @@ class PerformanceMonitor:
 
 def run_comprehensive_benchmark():
     """Run a comprehensive performance benchmark"""
-    connection_params = {
-        "host": "192.0.2.10",
-        "database": "d:\\data\\example.fdb",
-        "port": 3050,
-        "user": "EXAMPLE_USER",
-        "password": "REDACTED"
-    }
+    connection_params = dict(DB_CONFIG)
     
     monitor = PerformanceMonitor(connection_params)
     

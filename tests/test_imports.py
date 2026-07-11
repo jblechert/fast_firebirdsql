@@ -3,6 +3,12 @@
 Test that all classes can be imported correctly.
 """
 
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from db_config import DB_CONFIG
+
 def test_imports():
     """Test importing all classes"""
     print("Testing imports...")
@@ -21,11 +27,7 @@ def test_imports():
     
     # Test that we can create instances
     conn = connect(
-        host="192.0.2.10",
-        database="d:\\data\\example.fdb",
-        port=3050,
-        user="EXAMPLE_USER",
-        password="REDACTED"
+        **DB_CONFIG
     )
     print("✅ Connection created successfully")
     

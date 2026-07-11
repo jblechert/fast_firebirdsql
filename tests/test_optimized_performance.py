@@ -3,6 +3,12 @@
 Test the optimized fast_firebirdsql performance improvements
 """
 
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from db_config import DB_CONFIG
+
 import time
 import gc
 
@@ -18,11 +24,7 @@ def test_optimized_vs_standard_firebirdsql():
     import fast_firebirdsql
     
     conn = fast_firebirdsql.connect(
-        host="192.0.2.10",
-        database="d:\\data\\example.fdb",
-        port=3050,
-        user="EXAMPLE_USER",
-        password="REDACTED"
+        **DB_CONFIG
     )
     cur = conn.cursor()
     
@@ -40,11 +42,7 @@ def test_optimized_vs_standard_firebirdsql():
     import firebirdsql
     
     conn = firebirdsql.connect(
-        host="192.0.2.10",
-        database="d:\\data\\example.fdb",
-        port=3050,
-        user="EXAMPLE_USER",
-        password="REDACTED"
+        **DB_CONFIG
     )
     cur = conn.cursor()
     
@@ -71,11 +69,7 @@ def test_optimized_vs_standard_firebirdsql():
     
     # Test optimized fast_firebirdsql
     conn = fast_firebirdsql.connect(
-        host="192.0.2.10",
-        database="d:\\data\\example.fdb",
-        port=3050,
-        user="EXAMPLE_USER",
-        password="REDACTED"
+        **DB_CONFIG
     )
     cur = conn.cursor()
     cur.set_high_performance_mode(True)
@@ -93,11 +87,7 @@ def test_optimized_vs_standard_firebirdsql():
     
     # Test standard firebirdsql
     conn = firebirdsql.connect(
-        host="192.0.2.10",
-        database="d:\\data\\example.fdb",
-        port=3050,
-        user="EXAMPLE_USER",
-        password="REDACTED"
+        **DB_CONFIG
     )
     cur = conn.cursor()
     
@@ -127,11 +117,7 @@ def test_optimized_vs_standard_firebirdsql():
     for i in range(5):
         start_time = time.time()
         conn = fast_firebirdsql.connect(
-            host="192.0.2.10",
-            database="d:\\data\\example.fdb",
-            port=3050,
-            user="EXAMPLE_USER",
-            password="REDACTED"
+            **DB_CONFIG
         )
         conn.close()
         times.append(time.time() - start_time)
@@ -142,11 +128,7 @@ def test_optimized_vs_standard_firebirdsql():
     for i in range(5):
         start_time = time.time()
         conn = firebirdsql.connect(
-            host="192.0.2.10",
-            database="d:\\data\\example.fdb",
-            port=3050,
-            user="EXAMPLE_USER",
-            password="REDACTED"
+            **DB_CONFIG
         )
         conn.close()
         times.append(time.time() - start_time)
@@ -183,11 +165,7 @@ def test_performance_modes():
     import fast_firebirdsql
     
     conn = fast_firebirdsql.connect(
-        host="192.0.2.10",
-        database="d:\\data\\example.fdb",
-        port=3050,
-        user="EXAMPLE_USER",
-        password="REDACTED"
+        **DB_CONFIG
     )
     
     # Test default mode

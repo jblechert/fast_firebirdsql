@@ -4,6 +4,12 @@ Demonstration of firebirdsql compatibility.
 This shows how fast_firebirdsql can now be used as a drop-in replacement for firebirdsql.
 """
 
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from db_config import DB_CONFIG
+
 import fast_firebirdsql
 import time
 
@@ -19,11 +25,7 @@ def demo_firebirdsql_style():
     # conn = firebirdsql.connect(...)
 
     conn = fast_firebirdsql.connect(
-        host="192.0.2.10",  # 192.0.2.10 - example-server
-        database="d:\\data\\example.fdb",
-        port=3050,
-        user="EXAMPLE_USER",
-        password="REDACTED",
+        **DB_CONFIG,
     )
     
     # Create cursor (just like firebirdsql)

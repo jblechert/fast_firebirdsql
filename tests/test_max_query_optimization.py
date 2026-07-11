@@ -3,6 +3,12 @@
 Test script to analyze and optimize the slow MAX(GEAENDERT_AM) query on AUFPOS table.
 """
 
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from db_config import DB_CONFIG
+
 import fast_firebirdsql
 import time
 import sys
@@ -12,13 +18,7 @@ def test_slow_max_query():
     print("=== Testing MAX(GEAENDERT_AM) Query Performance ===")
     
     # Connection parameters for Family database
-    connection_params = {
-        "host": "192.0.2.10",
-        "database": "d:\\data\\example.fdb",
-        "port": 3050,
-        "user": "EXAMPLE_USER",
-        "password": "REDACTED"
-    }
+    connection_params = dict(DB_CONFIG)
     
     try:
         # Connect to database
@@ -149,13 +149,7 @@ def test_index_creation():
     """Test creating an index to improve MAX query performance"""
     print("\n=== Testing Index Creation for Optimization ===")
     
-    connection_params = {
-        "host": "192.0.2.10",
-        "database": "d:\\data\\example.fdb",
-        "port": 3050,
-        "user": "EXAMPLE_USER",
-        "password": "REDACTED"
-    }
+    connection_params = dict(DB_CONFIG)
     
     try:
         conn = fast_firebirdsql.connect(**connection_params)

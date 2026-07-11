@@ -4,6 +4,12 @@ Comprehensive Performance Testing and Benchmark Suite for fast_firebirdsql
 Provides automated performance regression testing and detailed benchmarking.
 """
 
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from db_config import DB_CONFIG
+
 import fast_firebirdsql
 import time
 import psutil
@@ -440,13 +446,7 @@ def main():
     args = parser.parse_args()
 
     # Database connection parameters
-    connection_params = {
-        "host": "192.0.2.10",
-        "database": "d:\\data\\example.fdb",
-        "port": 3050,
-        "user": "EXAMPLE_USER",
-        "password": "REDACTED"
-    }
+    connection_params = dict(DB_CONFIG)
 
     # Create benchmark suite
     suite = PerformanceBenchmarkSuite(connection_params, args.baseline)

@@ -9,6 +9,12 @@ Dieser Test überprüft genau das, was der Benutzer wollte:
 - Versuchen, eine weitere Abfrage auszuführen (sollte fehlschlagen)
 """
 
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from db_config import DB_CONFIG
+
 import fast_firebirdsql
 import sys
 import traceback
@@ -21,20 +27,7 @@ def test_query_after_close():
     
     # Verbindungsparameter - mehrere Optionen probieren
     connection_params_list = [
-        {
-            'host': '192.0.2.10',
-            'database': 'd:\\data\\example.fdb',
-            'port': 3050,
-            'user': 'EXAMPLE_USER',
-            'password': 'REDACTED'
-        },
-        {
-            'host': '192.0.2.10',
-            'database': 'bstools.fdb',
-            'port': 3050,
-            'user': 'SYSDBA',
-            'password': 'masterkey'
-        }
+        dict(DB_CONFIG)
     ]
     
     working_params = None

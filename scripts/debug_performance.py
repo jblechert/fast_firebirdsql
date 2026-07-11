@@ -3,6 +3,12 @@
 Debug Performance Issues in fast_firebirdsql
 """
 
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from db_config import DB_CONFIG
+
 import time
 import fast_firebirdsql
 import firebirdsql
@@ -16,11 +22,7 @@ def test_connection_behavior():
     start = time.time()
     try:
         conn = fast_firebirdsql.connect(
-            host="192.0.2.10",
-            database="d:\\data\\example.fdb",
-            port=3050,
-            user="EXAMPLE_USER",
-            password="REDACTED"
+            **DB_CONFIG
         )
         connect_time = time.time() - start
         print(f"   Connection time: {connect_time:.6f}s")
@@ -51,11 +53,7 @@ def test_connection_behavior():
     start = time.time()
     try:
         conn = firebirdsql.connect(
-            host="192.0.2.10",
-            database="d:\\data\\example.fdb",
-            port=3050,
-            user="EXAMPLE_USER",
-            password="REDACTED"
+            **DB_CONFIG
         )
         connect_time = time.time() - start
         print(f"   Connection time: {connect_time:.6f}s")
@@ -88,11 +86,7 @@ def test_query_patterns():
     # Test with fast_firebirdsql
     print("\n📊 fast_firebirdsql query patterns:")
     conn = fast_firebirdsql.connect(
-        host="192.0.2.10",
-        database="d:\\data\\example.fdb",
-        port=3050,
-        user="EXAMPLE_USER",
-        password="REDACTED"
+        **DB_CONFIG
     )
     cur = conn.cursor()
     
@@ -116,11 +110,7 @@ def test_query_patterns():
     # Test with standard firebirdsql
     print("\n📊 firebirdsql query patterns:")
     conn = firebirdsql.connect(
-        host="192.0.2.10",
-        database="d:\\data\\example.fdb",
-        port=3050,
-        user="EXAMPLE_USER",
-        password="REDACTED"
+        **DB_CONFIG
     )
     cur = conn.cursor()
     
@@ -140,11 +130,7 @@ def test_warmup_effect():
     print("\n📊 fast_firebirdsql warmup test:")
     for run in range(3):
         conn = fast_firebirdsql.connect(
-            host="192.0.2.10",
-            database="d:\\data\\example.fdb",
-            port=3050,
-            user="EXAMPLE_USER",
-            password="REDACTED"
+            **DB_CONFIG
         )
         cur = conn.cursor()
         

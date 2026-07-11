@@ -3,6 +3,12 @@
 Investigate why query execution is slow in fast_firebirdsql.
 """
 
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from db_config import DB_CONFIG
+
 import time
 import fast_firebirdsql
 
@@ -10,13 +16,7 @@ def test_connection_reuse_hypothesis():
     """Test if fast_firebirdsql really creates new connections for each query"""
     print("=== Testing Connection Reuse Hypothesis ===")
     
-    connection_params = {
-        "host": "192.0.2.10",
-        "database": "d:\\data\\example.fdb",
-        "port": 3050,
-        "user": "EXAMPLE_USER",
-        "password": "REDACTED"
-    }
+    connection_params = dict(DB_CONFIG)
     
     conn = fast_firebirdsql.connect(**connection_params)
     cur = conn.cursor()
@@ -48,13 +48,7 @@ def test_simple_vs_complex_queries():
     """Compare simple vs complex queries to isolate the overhead"""
     print("\n=== Simple vs Complex Query Comparison ===")
     
-    connection_params = {
-        "host": "192.0.2.10",
-        "database": "d:\\data\\example.fdb",
-        "port": 3050,
-        "user": "EXAMPLE_USER",
-        "password": "REDACTED"
-    }
+    connection_params = dict(DB_CONFIG)
     
     queries = [
         ("Simplest", "SELECT 1 FROM RDB$DATABASE"),
@@ -85,13 +79,7 @@ def test_fetchone_vs_fetchall_overhead():
     """Test if fetchall vs fetchone makes a difference"""
     print("\n=== fetchone() vs fetchall() Overhead ===")
     
-    connection_params = {
-        "host": "192.0.2.10",
-        "database": "d:\\data\\example.fdb",
-        "port": 3050,
-        "user": "EXAMPLE_USER",
-        "password": "REDACTED"
-    }
+    connection_params = dict(DB_CONFIG)
     
     query = "SELECT MAX(GEAENDERT_AM) FROM AUFPOS"
     
@@ -137,13 +125,7 @@ def test_timing_breakdown():
     """Break down timing to see where time is spent"""
     print("\n=== Detailed Timing Breakdown ===")
     
-    connection_params = {
-        "host": "192.0.2.10",
-        "database": "d:\\data\\example.fdb",
-        "port": 3050,
-        "user": "EXAMPLE_USER",
-        "password": "REDACTED"
-    }
+    connection_params = dict(DB_CONFIG)
     
     query = "SELECT MAX(GEAENDERT_AM) FROM AUFPOS"
     

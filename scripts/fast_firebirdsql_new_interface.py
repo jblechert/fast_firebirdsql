@@ -1,3 +1,9 @@
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from db_config import DB_CONFIG
+
 import fast_firebirdsql
 import time
 
@@ -6,11 +12,7 @@ start_time = time.time()
 
 # New firebirdsql-compatible interface
 conn = fast_firebirdsql.connect(
-    host="192.0.2.10",  # 192.0.2.10 - example-server
-    database="d:\\data\\example.fdb",
-    port=3050,
-    user="EXAMPLE_USER",
-    password="REDACTED",
+    **DB_CONFIG,
 )
 
 # Create cursor (like firebirdsql)
@@ -42,11 +44,7 @@ start_time = time.time()
 
 # Same interface - demonstrating that both examples use the same modern interface
 conn2 = fast_firebirdsql.connect(
-    host="192.0.2.10",  # 192.0.2.10 - example-server
-    database="d:\\data\\example.fdb",
-    port=3050,
-    user="EXAMPLE_USER",
-    password="REDACTED",
+    **DB_CONFIG,
 )
 
 # Use cursor/execute/fetchall interface (same as above)

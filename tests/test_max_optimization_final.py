@@ -3,6 +3,12 @@
 Final test showing the optimized MAX query performance.
 """
 
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from db_config import DB_CONFIG
+
 import fast_firebirdsql
 import time
 
@@ -10,13 +16,7 @@ def test_optimized_max_query():
     """Test the optimized MAX query performance"""
     print("=== Optimized MAX Query Performance Test ===")
     
-    connection_params = {
-        "host": "192.0.2.10",
-        "database": "d:\\data\\example.fdb",
-        "port": 3050,
-        "user": "EXAMPLE_USER",
-        "password": "REDACTED"
-    }
+    connection_params = dict(DB_CONFIG)
     
     try:
         conn = fast_firebirdsql.connect(**connection_params)
@@ -72,13 +72,7 @@ def compare_with_standard():
     try:
         import firebirdsql
         
-        connection_params = {
-            "host": "192.0.2.10",
-            "database": "d:\\data\\example.fdb",
-            "port": 3050,
-            "user": "EXAMPLE_USER",
-            "password": "REDACTED"
-        }
+        connection_params = dict(DB_CONFIG)
         
         conn = firebirdsql.connect(**connection_params)
         cur = conn.cursor()

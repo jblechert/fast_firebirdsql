@@ -3,6 +3,12 @@
 Test script to verify the library rename to fast_firebirdsql v0.3.0
 """
 
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from db_config import DB_CONFIG
+
 def test_import_and_version():
     """Test that the new library name and version work correctly"""
     print("Testing fast_firebirdsql v0.3.0 import and version...")
@@ -56,11 +62,7 @@ def test_basic_functionality():
         # Test connection creation (will fail due to database path, but that's OK)
         try:
             conn = fast_firebirdsql.connect(
-                host="192.0.2.10",
-                database="d:\\data\\example.fdb",
-                port=3050,
-                user="EXAMPLE_USER",
-                password="REDACTED"
+                **DB_CONFIG
             )
             
             # If we get here, test the cursor

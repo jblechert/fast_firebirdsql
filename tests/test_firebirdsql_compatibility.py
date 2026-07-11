@@ -4,6 +4,12 @@ Test script to verify firebirdsql compatibility of fast_firebirdsql module.
 This tests the new execute/fetchall interface and close functionality.
 """
 
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from db_config import DB_CONFIG
+
 import fast_firebirdsql
 import time
 
@@ -17,11 +23,7 @@ def test_new_interface():
         
         # Connect to database (same as before)
         conn = fast_firebirdsql.connect(
-            host="192.0.2.10",
-            database="d:\\data\\example.fdb",
-            port=3050,
-            user="EXAMPLE_USER",
-            password="REDACTED"
+            **DB_CONFIG
         )
         
         # Create cursor (new firebirdsql-compatible method)
@@ -75,11 +77,7 @@ def test_performance_metrics():
 
         # Connect to database
         conn = fast_firebirdsql.connect(
-            host="192.0.2.10",
-            database="d:\\data\\example.fdb",
-            port=3050,
-            user="EXAMPLE_USER",
-            password="REDACTED"
+            **DB_CONFIG
         )
 
         # Create cursor and execute query
@@ -129,11 +127,7 @@ def test_multiple_queries():
     try:
         # Connect to database
         conn = fast_firebirdsql.connect(
-            host="192.0.2.10",
-            database="d:\\data\\example.fdb",
-            port=3050,
-            user="EXAMPLE_USER",
-            password="REDACTED"
+            **DB_CONFIG
         )
         
         cur = conn.cursor()
