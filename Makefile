@@ -65,6 +65,13 @@ wheel:
 	@# so a later `make install` does not pick up the mangled library
 	@touch src/lib.rs
 
+wheel-windows:
+	@echo "🎡 Cross-building Windows (win_amd64) wheel into dist/..."
+	@# Needs mingw-w64 and `rustup target add x86_64-pc-windows-gnu`.
+	@# Links against the import libs in windows-firebird/; after installing
+	@# the wheel on Windows, run setup_windows_dlls.py once.
+	RUSTFLAGS="-L native=$(CURDIR)/windows-firebird" uvx maturin build --release --target x86_64-pc-windows-gnu -o dist -i 3.13
+
 # Test commands
 test: dev-install
 	@echo "🧪 Running pytest suite (read-only)..."

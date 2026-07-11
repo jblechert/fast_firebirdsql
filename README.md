@@ -75,6 +75,7 @@ The Makefile targets the production venv (Python 3.13) at
 make dev-install   # build (debug) and install into the venv
 make install       # build (release) and install into the venv
 make wheel         # build a portable manylinux wheel into dist/
+make wheel-windows # cross-build a win_amd64 wheel (needs mingw-w64)
 make test          # pytest suite (read-only) + legacy scripts (needs a database)
 make test-write    # pytest incl. write tests (creates/drops table TEST_FAST_FBSQL)
 make benchmark     # full benchmark suite
