@@ -14,24 +14,51 @@ conn = fast_firebirdsql.connect(
     port=3050, user="SYSDBA", password="masterkey",
 )
 cur = conn.cursor()
-cur.execute("SELECT * FROM some_table")
+cur.execute("SELECT NAME FROM some_table WHERE ID = ?", (42,))
 rows = cur.fetchall()
-conn.close()
+cur.execute("UPDATE some_table SET NAME = ? WHERE ID = ?", ("neu", 42))
+conn.commit()          # or conn.rollback()
+conn.close()           # closes with rollback of anything uncommitted
 ```
+
+## Transactions
+
+Since v0.6.0 this driver follows DB-API semantics, like `firebirdsql`:
+statements run inside a transaction (`READ COMMITTED RECORD_VERSION WAIT`)
+that is ended by `conn.commit()` or `conn.rollback()`; closing a connection
+rolls back uncommitted work. Pass `autocommit=True` to `connect()` to commit
+every statement immediately (the behaviour of versions before 0.6.0).
+
+## Parameter binding
+
+`cursor.execute(sql, params)` and `cursor.executemany(sql, param_sets)`
+accept qmark-style (`?`) placeholders with a tuple or list of values.
+Supported parameter types: `None`, `bool`, `int`, `float`, `str`, `bytes`,
+`datetime.datetime`, `datetime.date`. Never interpolate untrusted input
+into SQL strings.
 
 ## Known limitations
 
-Read this before relying on the "drop-in" claim:
+- `cursor.description` is derived from the first result row; for a SELECT
+  that returns no rows it is `None`. Only column names and coarse type
+  codes are filled in.
+- `decimal.Decimal` parameters are not supported (convert to `str` or
+  `float`); NUMERIC columns come back as `float`.
+- Statements are routed by their first keyword: only `SELECT`/`WITH`
+  return result rows.
+- **Build currently requires Python ≤ 3.13** (PyO3 0.22). Production runs
+  3.13, so this is not a blocker; on newer interpreters the build fails.
 
-- **Autocommit only.** Every `INSERT`/`UPDATE`/`DELETE`/`MERGE` commits
-  immediately in its own transaction. `conn.commit()` and `conn.rollback()`
-  exist for API compatibility but are **no-ops** — there is no way to roll
-  back a statement that has been executed.
-- **No parameter binding.** `cursor.execute(sql, params)` is not supported;
-  only plain SQL strings. Do not interpolate untrusted input into queries.
-- `cursor.description` and `cursor.rowcount` are not implemented.
-- **Build currently requires Python ≤ 3.13** (PyO3 0.22). Upgrading PyO3 is
-  planned; on newer interpreters the build fails.
+## Behaviour changes in v0.6.0
+
+- `conn.commit()`/`conn.rollback()` are real now (previously no-ops with
+  per-statement autocommit). Code that never calls `commit()` must pass
+  `autocommit=True` or it will lose its writes on `close()`.
+- `fetchall()` after an `INSERT`/`UPDATE`/`DELETE` returns `[]`; the
+  affected-row count moved to `cursor.rowcount` (previously a fake
+  `[(n,)]` result row).
+- `connect()` establishes the connection eagerly, so connection errors
+  surface at `connect()` instead of at the first `execute()`.
 
 ## Building
 
@@ -45,7 +72,8 @@ The Makefile targets the production venv (Python 3.13) at
 make dev-install   # build (debug) and install into the venv
 make install       # build (release) and install into the venv
 make wheel         # build a portable manylinux wheel into dist/
-make test          # basic functionality tests (needs a reachable database)
+make test          # pytest suite (read-only) + legacy scripts (needs a database)
+make test-write    # pytest incl. write tests (creates/drops table TEST_FAST_FBSQL)
 make benchmark     # full benchmark suite
 ```
 

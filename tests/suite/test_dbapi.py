@@ -1,0 +1,267 @@
+"""DB-API behaviour tests for fast_firebirdsql (v0.6.0+).
+
+Covers parameter binding, transactions (commit/rollback/autocommit),
+cursor.description and cursor.rowcount.
+"""
+
+import datetime
+import sys
+from pathlib import Path
+
+import pytest
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+from db_config import DB_CONFIG
+
+import fast_firebirdsql
+
+from conftest import requires_write
+
+
+# --- read-only tests ---------------------------------------------------
+
+
+def test_connect_and_close():
+    conn = fast_firebirdsql.connect(**DB_CONFIG)
+    conn.close()
+    conn.close()  # double close must not raise
+
+
+def test_cursor_after_close_raises():
+    conn = fast_firebirdsql.connect(**DB_CONFIG)
+    conn.close()
+    with pytest.raises(RuntimeError):
+        conn.cursor()
+
+
+def test_connect_bad_host_raises_immediately():
+    with pytest.raises(RuntimeError):
+        fast_firebirdsql.connect(
+            host="127.0.0.1",
+            database="/nonexistent/no.fdb",
+            port=1,
+            user="X",
+            password="Y",
+        )
+
+
+def test_select_fetchall(conn):
+    cur = conn.cursor()
+    cur.execute("SELECT 1 FROM RDB$DATABASE")
+    rows = cur.fetchall()
+    assert rows == [(1,)]
+
+
+def test_select_with_params(conn):
+    cur = conn.cursor()
+    cur.execute("SELECT 1 FROM RDB$DATABASE WHERE 1 = ?", (1,))
+    assert cur.fetchall() == [(1,)]
+    cur.execute("SELECT 1 FROM RDB$DATABASE WHERE 1 = ?", (2,))
+    assert cur.fetchall() == []
+
+
+def test_param_type_roundtrip(conn):
+    cur = conn.cursor()
+    ts = datetime.datetime(2026, 7, 11, 12, 30, 45, 123400)
+    cur.execute(
+        "SELECT CAST(? AS INTEGER), CAST(? AS VARCHAR(50)), "
+        "CAST(? AS DOUBLE PRECISION), CAST(? AS TIMESTAMP), CAST(? AS INTEGER) "
+        "FROM RDB$DATABASE",
+        (42, "hello wörld", 3.5, ts, None),
+    )
+    row = cur.fetchall()[0]
+    assert row == (42, "hello wörld", 3.5, ts, None)
+
+
+def test_date_param(conn):
+    cur = conn.cursor()
+    d = datetime.date(2026, 7, 11)
+    cur.execute("SELECT CAST(? AS DATE) FROM RDB$DATABASE", (d,))
+    result = cur.fetchall()[0][0]
+    # DATE columns come back as datetime at midnight
+    assert result == datetime.datetime(2026, 7, 11, 0, 0, 0)
+
+
+def test_params_as_list(conn):
+    cur = conn.cursor()
+    cur.execute("SELECT CAST(? AS INTEGER) FROM RDB$DATABASE", [7])
+    assert cur.fetchall() == [(7,)]
+
+
+def test_string_params_rejected(conn):
+    cur = conn.cursor()
+    with pytest.raises(TypeError):
+        cur.execute("SELECT CAST(? AS VARCHAR(10)) FROM RDB$DATABASE", "abc")
+
+
+def test_unsupported_param_type_rejected(conn):
+    cur = conn.cursor()
+    with pytest.raises(TypeError):
+        cur.execute("SELECT CAST(? AS INTEGER) FROM RDB$DATABASE", (object(),))
+
+
+def test_description(conn):
+    cur = conn.cursor()
+    cur.execute("SELECT RDB$RELATION_ID AS REL_ID, RDB$CHARACTER_SET_NAME FROM RDB$DATABASE")
+    cur.fetchall()
+    assert cur.description is not None
+    names = [d[0] for d in cur.description]
+    assert names == ["REL_ID", "RDB$CHARACTER_SET_NAME"]
+    assert all(len(d) == 7 for d in cur.description)
+
+
+def test_description_empty_result_is_none(conn):
+    # Known limitation: metadata is derived from the first row
+    cur = conn.cursor()
+    cur.execute("SELECT 1 FROM RDB$DATABASE WHERE 1 = 0")
+    cur.fetchall()
+    assert cur.description is None
+
+
+def test_rowcount_select(conn):
+    cur = conn.cursor()
+    assert cur.rowcount == -1
+    cur.execute("SELECT 1 FROM RDB$DATABASE")
+    assert cur.rowcount == 1
+
+
+def test_fetchone_and_fetchmany(conn):
+    cur = conn.cursor()
+    cur.execute(
+        "SELECT RDB$RELATION_ID FROM RDB$RELATIONS ORDER BY RDB$RELATION_ID ROWS 5"
+    )
+    first = cur.fetchone()
+    assert first is not None
+    rest = cur.fetchmany(2)
+    assert len(rest) == 2
+    remaining = cur.fetchall()
+    assert cur.rowcount == 5
+
+
+def test_commit_rollback_without_writes(conn):
+    cur = conn.cursor()
+    cur.execute("SELECT 1 FROM RDB$DATABASE")
+    cur.fetchall()
+    conn.commit()
+    conn.rollback()  # no pending transaction: must not raise
+
+
+def test_multiple_cursors_share_connection(conn):
+    c1 = conn.cursor()
+    c2 = conn.cursor()
+    c1.execute("SELECT 1 FROM RDB$DATABASE")
+    c2.execute("SELECT 2 FROM RDB$DATABASE")
+    assert c1.fetchall() == [(1,)]
+    assert c2.fetchall() == [(2,)]
+
+
+# --- write tests (FIREBIRD_ALLOW_WRITE_TESTS=1) ------------------------
+
+
+@requires_write
+def test_insert_with_params_and_rowcount(conn, test_table):
+    cur = conn.cursor()
+    ts = datetime.datetime(2026, 7, 11, 8, 15, 0)
+    cur.execute(
+        f"INSERT INTO {test_table} (ID, NAME, TS) VALUES (?, ?, ?)",
+        (1, "eins", ts),
+    )
+    assert cur.rowcount == 1
+    cur.execute(f"SELECT ID, NAME, TS FROM {test_table}")
+    assert cur.fetchall() == [(1, "eins", ts)]
+    conn.rollback()
+
+
+@requires_write
+def test_rollback_undoes_insert(conn, test_table):
+    cur = conn.cursor()
+    cur.execute(f"INSERT INTO {test_table} (ID, NAME) VALUES (?, ?)", (1, "weg damit"))
+    conn.rollback()
+    cur.execute(f"SELECT COUNT(*) FROM {test_table}")
+    assert cur.fetchall() == [(0,)]
+
+
+@requires_write
+def test_commit_persists_for_other_connection(conn, test_table):
+    cur = conn.cursor()
+    cur.execute(f"INSERT INTO {test_table} (ID, NAME) VALUES (?, ?)", (2, "bleibt"))
+    conn.commit()
+
+    other = fast_firebirdsql.connect(**DB_CONFIG)
+    try:
+        ocur = other.cursor()
+        ocur.execute(f"SELECT ID, NAME FROM {test_table}")
+        assert ocur.fetchall() == [(2, "bleibt")]
+    finally:
+        other.close()
+
+    cur.execute(f"DELETE FROM {test_table}")
+    assert cur.rowcount == 1
+    conn.commit()
+
+
+@requires_write
+def test_uncommitted_insert_invisible_to_other_connection(conn, test_table):
+    cur = conn.cursor()
+    cur.execute(f"INSERT INTO {test_table} (ID) VALUES (?)", (3,))
+
+    other = fast_firebirdsql.connect(**DB_CONFIG)
+    try:
+        ocur = other.cursor()
+        ocur.execute(f"SELECT COUNT(*) FROM {test_table}")
+        assert ocur.fetchall() == [(0,)]
+    finally:
+        other.close()
+    conn.rollback()
+
+
+@requires_write
+def test_close_rolls_back_open_transaction(test_table, conn):
+    writer = fast_firebirdsql.connect(**DB_CONFIG)
+    wcur = writer.cursor()
+    wcur.execute(f"INSERT INTO {test_table} (ID) VALUES (?)", (4,))
+    writer.close()  # DB-API: close without commit rolls back
+
+    cur = conn.cursor()
+    cur.execute(f"SELECT COUNT(*) FROM {test_table}")
+    assert cur.fetchall() == [(0,)]
+
+
+@requires_write
+def test_executemany(conn, test_table):
+    cur = conn.cursor()
+    cur.executemany(
+        f"INSERT INTO {test_table} (ID, NAME) VALUES (?, ?)",
+        [(1, "a"), (2, "b"), (3, "c")],
+    )
+    assert cur.rowcount == 3
+    cur.execute(f"SELECT COUNT(*) FROM {test_table}")
+    assert cur.fetchall() == [(3,)]
+    conn.rollback()
+
+
+@requires_write
+def test_autocommit_mode(autocommit_conn, test_table, conn):
+    # test_table was created via `conn`; make its DDL visible to everyone
+    acur = autocommit_conn.cursor()
+    acur.execute(f"INSERT INTO {test_table} (ID) VALUES (?)", (5,))
+    # no commit on purpose - autocommit must have persisted the row
+
+    cur = conn.cursor()
+    cur.execute(f"SELECT ID FROM {test_table}")
+    assert cur.fetchall() == [(5,)]
+    conn.commit()
+
+    acur.execute(f"DELETE FROM {test_table}")
+
+
+@requires_write
+def test_update_rowcount(conn, test_table):
+    cur = conn.cursor()
+    cur.executemany(
+        f"INSERT INTO {test_table} (ID, NAME) VALUES (?, ?)",
+        [(1, "x"), (2, "x"), (3, "y")],
+    )
+    cur.execute(f"UPDATE {test_table} SET NAME = ? WHERE NAME = ?", ("z", "x"))
+    assert cur.rowcount == 2
+    conn.rollback()

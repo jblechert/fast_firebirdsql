@@ -1,11 +1,12 @@
+use pyo3::exceptions::{PyRuntimeError, PyTypeError};
 use pyo3::prelude::*;
-use pyo3::types::{PyTuple, PyDateTime, PyDict};
+use pyo3::types::{PyBool, PyBytes, PyDate, PyDateAccess, PyDateTime, PyDict, PyTimeAccess, PyTuple};
 use rsfbclient::prelude::*;
-use rsfbclient::{Row, SqlType, SimpleConnection};
-use chrono::{Datelike, Timelike};
-use std::sync::{Arc, Mutex, LazyLock};
-use std::time::{Instant, Duration};
+use rsfbclient::{Row, SimpleConnection, SqlType};
+use chrono::{Datelike, NaiveDate, NaiveDateTime, Timelike};
 use std::collections::HashMap;
+use std::sync::{Arc, LazyLock, Mutex};
+use std::time::{Duration, Instant};
 
 /// Performance metrics for tracking query execution
 #[derive(Debug, Clone)]
@@ -53,7 +54,7 @@ static PERFORMANCE_METRICS: LazyLock<Mutex<HashMap<String, Vec<QueryMetrics>>>> 
 static TYPE_CONVERSION_CACHE: LazyLock<Mutex<HashMap<String, PyObject>>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
 
-/// Query cache entry (statistics only; queries are not actually prepared/reused)
+/// Query cache entry (statistics only; rsfbclient maintains the real statement cache)
 #[derive(Debug, Clone)]
 struct QueryCacheEntry {
     last_used: Instant,
@@ -84,6 +85,9 @@ static QUERY_OPTIMIZATION_STATS: LazyLock<Mutex<QueryOptimizationStats>> =
         average_preparation_time: Duration::ZERO,
     }));
 
+fn runtime_error(msg: impl Into<String>) -> PyErr {
+    PyErr::new::<PyRuntimeError, _>(msg.into())
+}
 
 /// Convert a Firebird column value to the corresponding Python object
 fn sqltype_to_python(py: Python, sql_type: SqlType) -> PyResult<PyObject> {
@@ -93,7 +97,6 @@ fn sqltype_to_python(py: Python, sql_type: SqlType) -> PyResult<PyObject> {
         SqlType::Floating(f) => Ok(f.to_object(py)),
         SqlType::Boolean(b) => Ok(b.to_object(py)),
         SqlType::Timestamp(dt) => {
-            // Fast datetime conversion
             let py_datetime = PyDateTime::new_bound(
                 py,
                 dt.year(),
@@ -112,21 +115,85 @@ fn sqltype_to_python(py: Python, sql_type: SqlType) -> PyResult<PyObject> {
     }
 }
 
-/// Firebird database cursor with streaming support
-#[pyclass]
-struct FirebirdCursor {
-    connection_info: Arc<ConnectionInfo>,
-    results: Option<Vec<PyObject>>,
-    current_position: usize,
-    total_rows: Option<usize>,
-    last_metrics: Option<QueryMetrics>,
-    enable_metrics: bool,
-    closed: Arc<Mutex<bool>>,
-    streaming_mode: bool,
-    chunk_size: usize,
-    enable_query_cache: bool,
-    // Persistent connection for reuse across execute calls
-    persistent_connection: Option<SimpleConnection>,
+/// DB-API type_code string for a column value
+fn sqltype_type_code(sql_type: &SqlType) -> Option<&'static str> {
+    match sql_type {
+        SqlType::Text(_) => Some("TEXT"),
+        SqlType::Integer(_) => Some("INTEGER"),
+        SqlType::Floating(_) => Some("FLOAT"),
+        SqlType::Boolean(_) => Some("BOOLEAN"),
+        SqlType::Timestamp(_) => Some("TIMESTAMP"),
+        SqlType::Binary(_) => Some("BINARY"),
+        SqlType::Null => None,
+    }
+}
+
+/// Convert a single Python parameter value to a Firebird SqlType
+fn py_param_to_sqltype(obj: &Bound<'_, PyAny>) -> PyResult<SqlType> {
+    if obj.is_none() {
+        return Ok(SqlType::Null);
+    }
+    // bool must be checked before int (bool is a subclass of int in Python)
+    if let Ok(b) = obj.downcast::<PyBool>() {
+        return Ok(SqlType::Boolean(b.is_true()));
+    }
+    // datetime must be checked before date (datetime is a subclass of date)
+    if let Ok(dt) = obj.downcast::<PyDateTime>() {
+        let date = NaiveDate::from_ymd_opt(dt.get_year(), dt.get_month() as u32, dt.get_day() as u32)
+            .ok_or_else(|| PyErr::new::<PyTypeError, _>("invalid date in datetime parameter"))?;
+        let ts = date
+            .and_hms_micro_opt(
+                dt.get_hour() as u32,
+                dt.get_minute() as u32,
+                dt.get_second() as u32,
+                dt.get_microsecond(),
+            )
+            .ok_or_else(|| PyErr::new::<PyTypeError, _>("invalid time in datetime parameter"))?;
+        return Ok(SqlType::Timestamp(ts));
+    }
+    if let Ok(d) = obj.downcast::<PyDate>() {
+        let date = NaiveDate::from_ymd_opt(d.get_year(), d.get_month() as u32, d.get_day() as u32)
+            .ok_or_else(|| PyErr::new::<PyTypeError, _>("invalid date parameter"))?;
+        let ts = NaiveDateTime::new(date, chrono::NaiveTime::MIN);
+        return Ok(SqlType::Timestamp(ts));
+    }
+    if let Ok(i) = obj.extract::<i64>() {
+        return Ok(SqlType::Integer(i));
+    }
+    if let Ok(f) = obj.extract::<f64>() {
+        return Ok(SqlType::Floating(f));
+    }
+    if let Ok(s) = obj.extract::<String>() {
+        return Ok(SqlType::Text(s));
+    }
+    if let Ok(b) = obj.downcast::<PyBytes>() {
+        return Ok(SqlType::Binary(b.as_bytes().to_vec()));
+    }
+    Err(PyErr::new::<PyTypeError, _>(format!(
+        "unsupported parameter type: {} (supported: None, bool, int, float, str, bytes, datetime, date)",
+        obj.get_type().name().map(|n| n.to_string()).unwrap_or_else(|_| "?".into())
+    )))
+}
+
+/// Convert an optional Python parameter sequence (tuple/list) to Firebird params
+fn py_params_to_sqltypes(params: Option<&Bound<'_, PyAny>>) -> PyResult<Vec<SqlType>> {
+    let Some(params) = params else {
+        return Ok(Vec::new());
+    };
+    if params.is_none() {
+        return Ok(Vec::new());
+    }
+    // A bare string/bytes is almost certainly a mistake, not a sequence of params
+    if params.extract::<String>().is_ok() || params.downcast::<PyBytes>().is_ok() {
+        return Err(PyErr::new::<PyTypeError, _>(
+            "params must be a sequence (tuple or list), not a string",
+        ));
+    }
+    let mut values = Vec::new();
+    for item in params.iter()? {
+        values.push(py_param_to_sqltype(&item?)?);
+    }
+    Ok(values)
 }
 
 #[derive(Clone)]
@@ -138,45 +205,73 @@ struct ConnectionInfo {
     password: String,
 }
 
+/// Connection state shared between a FirebirdConnection and all its cursors
+struct SharedConnection {
+    conn: Option<SimpleConnection>,
+    in_transaction: bool,
+}
+
+/// READ COMMITTED + RECORD VERSION + WAIT, like the pure-Python firebirdsql
+/// driver. rsfbclient's own default is NO RECORD VERSION, which makes
+/// readers block on uncommitted changes of other transactions.
+fn default_transaction_config() -> TransactionConfiguration {
+    TransactionConfiguration {
+        data_access: TrDataAccessMode::ReadWrite,
+        isolation: TrIsolationLevel::ReadCommited(TrRecordVersion::RecordVersion),
+        lock_resolution: TrLockResolution::Wait(None),
+    }
+}
+
+fn create_connection(info: &ConnectionInfo) -> PyResult<SimpleConnection> {
+    let conn = rsfbclient::builder_native()
+        .with_dyn_link()
+        .with_remote()
+        .host(&info.host)
+        .port(info.port)
+        .db_name(&info.database)
+        .user(&info.user)
+        .pass(&info.password)
+        .transaction(default_transaction_config())
+        .connect()
+        .map_err(|e| runtime_error(e.to_string()))?;
+    Ok(conn.into())
+}
+
+/// Firebird database cursor (DB-API style)
+#[pyclass]
+struct FirebirdCursor {
+    connection_info: Arc<ConnectionInfo>,
+    shared: Arc<Mutex<SharedConnection>>,
+    autocommit: bool,
+    results: Option<Vec<PyObject>>,
+    current_position: usize,
+    total_rows: Option<usize>,
+    row_count: i64,
+    column_info: Option<Vec<(String, Option<&'static str>)>>,
+    last_metrics: Option<QueryMetrics>,
+    enable_metrics: bool,
+    closed: Arc<Mutex<bool>>,
+    streaming_mode: bool,
+    chunk_size: usize,
+    enable_query_cache: bool,
+}
+
 /// Firebird database connection
 #[pyclass]
 struct FirebirdConnection {
     connection_info: Arc<ConnectionInfo>,
     closed: Arc<Mutex<bool>>,
+    shared: Arc<Mutex<SharedConnection>>,
+    autocommit: bool,
 }
 
 impl FirebirdCursor {
-    /// Get or create a persistent connection for reuse across execute calls
-    fn get_or_create_persistent_connection(&mut self) -> PyResult<&mut SimpleConnection> {
-        // Check if connection is closed first
-        {
-            let closed = self.closed.lock().unwrap();
-            if *closed {
-                return Err(PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(
-                    "Connection is closed"
-                ));
-            }
+    fn check_open(&self) -> PyResult<()> {
+        let closed = self.closed.lock().unwrap();
+        if *closed {
+            return Err(runtime_error("Connection is closed"));
         }
-
-        // If we don't have a persistent connection, create one
-        if self.persistent_connection.is_none() {
-            let conn = rsfbclient::builder_native()
-                .with_dyn_link()
-                .with_remote()
-                .host(&self.connection_info.host)
-                .port(self.connection_info.port)
-                .db_name(&self.connection_info.database)
-                .user(&self.connection_info.user)
-                .pass(&self.connection_info.password)
-                .connect()
-                .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?;
-
-            // Convert to SimpleConnection for easier storage
-            self.persistent_connection = Some(conn.into());
-        }
-
-        // Return a mutable reference to the connection
-        Ok(self.persistent_connection.as_mut().unwrap())
+        Ok(())
     }
 
     /// Convert a Firebird row to a Python tuple
@@ -190,103 +285,123 @@ impl FirebirdCursor {
         let tuple = PyTuple::new_bound(py, values);
         Ok(tuple.to_object(py))
     }
+
+    /// Execute a statement on the shared connection, starting a transaction if needed
+    fn execute_inner(&mut self, py: Python, sql: &str, params: Vec<SqlType>) -> PyResult<()> {
+        self.check_open()?;
+        self.current_position = 0;
+        self.results = None;
+        self.column_info = None;
+        self.row_count = -1;
+        self.total_rows = None;
+
+        let mut shared = self.shared.lock().unwrap();
+        if shared.conn.is_none() {
+            shared.conn = Some(create_connection(&self.connection_info)?);
+        }
+        // DB-API: statements run inside a transaction until commit()/rollback(),
+        // unless the connection was opened with autocommit=True
+        if !self.autocommit && !shared.in_transaction {
+            shared
+                .conn
+                .as_mut()
+                .unwrap()
+                .begin_transaction_config(default_transaction_config())
+                .map_err(|e| runtime_error(format!("Failed to begin transaction: {e}")))?;
+            shared.in_transaction = true;
+        }
+        let conn = shared.conn.as_mut().unwrap();
+
+        let sql_upper = sql.trim_start().to_uppercase();
+        if sql_upper.starts_with("SELECT") || sql_upper.starts_with("WITH") {
+            // Statement returns rows
+            let rows: Result<Vec<Row>, _> = conn
+                .query_iter(sql, params)
+                .map_err(|e| runtime_error(e.to_string()))?
+                .collect();
+            let rows = rows.map_err(|e| runtime_error(e.to_string()))?;
+
+            if let Some(first) = rows.first() {
+                self.column_info = Some(
+                    first
+                        .cols
+                        .iter()
+                        .map(|c| (c.name.clone(), sqltype_type_code(&c.value)))
+                        .collect(),
+                );
+            }
+
+            let mut result = Vec::with_capacity(rows.len());
+            for row in rows {
+                result.push(self.convert_row_to_python(py, row)?);
+            }
+
+            self.row_count = result.len() as i64;
+            self.total_rows = Some(result.len());
+            self.results = Some(result);
+        } else {
+            // Statement does not return rows (INSERT/UPDATE/DELETE/DDL/...)
+            let affected = conn
+                .execute(sql, params)
+                .map_err(|e| runtime_error(e.to_string()))?;
+            self.row_count = affected as i64;
+            self.results = Some(Vec::new());
+        }
+
+        Ok(())
+    }
 }
 
 #[pymethods]
 impl FirebirdCursor {
-    /// Execute SQL query and store results (with automatic routing for different query types)
-    fn execute(&mut self, sql: &str) -> PyResult<()> {
-        // Reset cursor position for new query
-        self.current_position = 0;
-
-        // Normalize SQL for analysis
-        let sql_upper = sql.trim().to_uppercase();
-
-        // Route to appropriate execution method based on SQL type
-        // Data modification operations need special transaction handling (especially on Windows)
-        if sql_upper.starts_with("UPDATE ") ||
-           sql_upper.starts_with("INSERT ") ||
-           sql_upper.starts_with("DELETE ") ||
-           sql_upper.starts_with("MERGE ") {
-            self.execute_modification(sql)
-        }
-        // For all other queries (SELECT, etc.), use ultra-fast execution with connection reuse
-        else {
-            self.execute_ultra_fast(sql)
-        }
+    /// Execute an SQL statement, optionally with qmark-style (?) parameters
+    #[pyo3(signature = (sql, params=None))]
+    fn execute(&mut self, py: Python<'_>, sql: &str, params: Option<&Bound<'_, PyAny>>) -> PyResult<()> {
+        let params = py_params_to_sqltypes(params)?;
+        self.execute_inner(py, sql, params)
     }
 
-    /// Execute data modification operations (UPDATE, INSERT, DELETE) with proper transaction handling
-    fn execute_modification(&mut self, sql: &str) -> PyResult<()> {
-        // Get or create persistent connection (includes connection closed check)
-        self.get_or_create_persistent_connection()?;
-
-        Python::with_gil(|py| {
-            // Manual transaction handling for proper Windows compatibility
-            let affected_rows = {
-                let conn = self.persistent_connection.as_mut().unwrap();
-
-                // Begin transaction
-                conn.begin_transaction()
-                    .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(
-                        format!("Failed to begin transaction: {e}")
-                    ))?;
-
-                // Execute the modification query within transaction
-                let result = conn.execute(sql, ())
-                    .map_err(|e| {
-                        // Rollback on error
-                        let _ = conn.rollback();
-                        PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(
-                            format!("Failed to execute modification: {e}")
-                        )
-                    })?;
-
-                // Commit transaction
-                conn.commit()
-                    .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(
-                        format!("Failed to commit transaction: {e}")
-                    ))?;
-
-                result
-            };
-
-            // For modification operations, return the number of affected rows as a result
-            let result = vec![PyTuple::new_bound(py, [affected_rows]).to_object(py)];
-            self.results = Some(result);
-
-            Ok(())
-        })
-    }
-
-    /// Ultra-fast execution with persistent connection reuse for maximum performance
-    fn execute_ultra_fast(&mut self, sql: &str) -> PyResult<()> {
-        // Ensure we have a persistent connection (includes connection closed check)
-        self.get_or_create_persistent_connection()?;
-
-        // Now we can safely use the connection
-        Python::with_gil(|py| {
-            // Execute query and collect all rows first to avoid borrowing issues
-            let rows: Result<Vec<Row>, _> = {
-                let conn = self.persistent_connection.as_mut().unwrap();
-                conn.query_iter(sql, ())
-                    .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?
-                    .collect()
-            };
-
-            let rows = rows.map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?;
-
-            // Process results with ultra-fast conversion
-            let mut result = Vec::new();
-
-            for row in rows {
-                let py_row = self.convert_row_to_python(py, row)?;
-                result.push(py_row);
+    /// Execute an SQL statement once per parameter set
+    fn executemany(&mut self, py: Python<'_>, sql: &str, param_sets: &Bound<'_, PyAny>) -> PyResult<()> {
+        let mut total: i64 = 0;
+        let mut executed = false;
+        for params in param_sets.iter()? {
+            let params = py_params_to_sqltypes(Some(&params?))?;
+            self.execute_inner(py, sql, params)?;
+            executed = true;
+            if self.row_count > 0 {
+                total += self.row_count;
             }
+        }
+        self.results = Some(Vec::new());
+        self.row_count = if executed { total } else { -1 };
+        Ok(())
+    }
 
-            self.results = Some(result);
-            Ok(())
+    /// Legacy alias for execute() (kept for backwards compatibility)
+    fn execute_ultra_fast(&mut self, py: Python<'_>, sql: &str) -> PyResult<()> {
+        self.execute_inner(py, sql, Vec::new())
+    }
+
+    /// DB-API: sequence of 7-tuples describing the result columns of the
+    /// last SELECT (derived from the first result row; None if no rows)
+    #[getter]
+    #[allow(clippy::type_complexity)]
+    fn description(
+        &self,
+    ) -> Option<Vec<(String, Option<&'static str>, Option<i32>, Option<i32>, Option<i32>, Option<i32>, Option<bool>)>> {
+        self.column_info.as_ref().map(|cols| {
+            cols.iter()
+                .map(|(name, code)| (name.clone(), *code, None, None, None, None, None))
+                .collect()
         })
+    }
+
+    /// DB-API: number of rows returned by the last SELECT or affected by the
+    /// last modification (-1 if no statement was executed yet)
+    #[getter]
+    fn rowcount(&self) -> i64 {
+        self.row_count
     }
 
     /// Fetch all results from the last executed query
@@ -304,7 +419,6 @@ impl FirebirdCursor {
     fn fetchone(&mut self) -> PyResult<Option<PyObject>> {
         if let Some(ref results) = self.results {
             if self.current_position < results.len() {
-                // Use Python::with_gil to properly clone PyObject
                 Python::with_gil(|py| {
                     let row = results[self.current_position].clone_ref(py);
                     self.current_position += 1;
@@ -328,7 +442,6 @@ impl FirebirdCursor {
             let end = (start + fetch_size).min(results.len());
 
             if start < end {
-                // Use Python::with_gil to properly clone PyObjects
                 Python::with_gil(|py| {
                     let rows: Vec<PyObject> = results[start..end]
                         .iter()
@@ -394,8 +507,6 @@ impl FirebirdCursor {
         }
         Ok(())
     }
-
-
 
     /// Get query optimization status
     fn get_optimization_status(&self) -> PyResult<PyObject> {
@@ -467,16 +578,12 @@ impl FirebirdCursor {
         Ok(self.chunk_size)
     }
 
-    /// Close the cursor
+    /// Close the cursor (the underlying connection stays open; it belongs
+    /// to the FirebirdConnection object)
     fn close(&mut self) -> PyResult<()> {
-        // Close the persistent connection if it exists
-        if let Some(conn) = self.persistent_connection.take() {
-            // Attempt to close the connection gracefully
-            if let Err(e) = conn.close() {
-                // Log the error but don't fail the close operation
-                eprintln!("Warning: Error closing persistent connection: {e}");
-            }
-        }
+        self.results = None;
+        self.column_info = None;
+        self.current_position = 0;
         Ok(())
     }
 }
@@ -487,80 +594,104 @@ impl FirebirdConnection {
     fn cursor(&self) -> PyResult<FirebirdCursor> {
         let closed = self.closed.lock().unwrap();
         if *closed {
-            return Err(PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(
-                "Connection is closed"
-            ));
+            return Err(runtime_error("Connection is closed"));
         }
 
         Ok(FirebirdCursor {
             connection_info: Arc::clone(&self.connection_info),
+            shared: Arc::clone(&self.shared),
+            autocommit: self.autocommit,
             results: None,
             current_position: 0,
             total_rows: None,
+            row_count: -1,
+            column_info: None,
             last_metrics: None,
-            enable_metrics: false, // Disable metrics by default for better performance
+            enable_metrics: false,
             closed: Arc::clone(&self.closed),
-            streaming_mode: false, // Default to traditional mode
-            chunk_size: 1000, // Default chunk size for fetchmany
+            streaming_mode: false,
+            chunk_size: 1000,
             enable_query_cache: true,
-            // Initialize persistent connection as None - will be created on first execute
-            persistent_connection: None,
         })
     }
 
-    /// Close the connection
-    fn close(&self) -> PyResult<()> {
-        let mut closed = self.closed.lock().unwrap();
-        *closed = true;
-        Ok(())
-    }
-
-    /// Commit current transaction (firebirdsql compatibility)
-    /// Note: In fast_firebirdsql, transactions are handled automatically per operation
-    /// This method is provided for compatibility but is essentially a no-op
+    /// Commit the current transaction
     fn commit(&self) -> PyResult<()> {
-        // Check if connection is closed
         let closed = self.closed.lock().unwrap();
         if *closed {
-            return Err(PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(
-                "Connection is closed"
-            ));
+            return Err(runtime_error("Connection is closed"));
         }
+        drop(closed);
 
-        // In fast_firebirdsql, each operation handles its own transaction
-        // This method is provided for firebirdsql compatibility
-        // All modifications are automatically committed when executed
+        let mut shared = self.shared.lock().unwrap();
+        if shared.in_transaction {
+            shared
+                .conn
+                .as_mut()
+                .unwrap()
+                .commit()
+                .map_err(|e| runtime_error(format!("Failed to commit transaction: {e}")))?;
+            shared.in_transaction = false;
+        }
         Ok(())
     }
 
-    /// Rollback current transaction (firebirdsql compatibility)
-    /// Note: In fast_firebirdsql, transactions are handled automatically per operation
-    /// This method is provided for compatibility but is essentially a no-op
+    /// Roll back the current transaction
     fn rollback(&self) -> PyResult<()> {
-        // Check if connection is closed
         let closed = self.closed.lock().unwrap();
         if *closed {
-            return Err(PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(
-                "Connection is closed"
-            ));
+            return Err(runtime_error("Connection is closed"));
         }
+        drop(closed);
 
-        // In fast_firebirdsql, each operation handles its own transaction
-        // This method is provided for firebirdsql compatibility
-        // There's no pending transaction to rollback since operations auto-commit
+        let mut shared = self.shared.lock().unwrap();
+        if shared.in_transaction {
+            shared
+                .conn
+                .as_mut()
+                .unwrap()
+                .rollback()
+                .map_err(|e| runtime_error(format!("Failed to roll back transaction: {e}")))?;
+            shared.in_transaction = false;
+        }
         Ok(())
     }
 
+    /// Close the connection. An open transaction is rolled back (DB-API).
+    fn close(&self) -> PyResult<()> {
+        {
+            let mut closed = self.closed.lock().unwrap();
+            *closed = true;
+        }
+
+        let mut shared = self.shared.lock().unwrap();
+        if let Some(mut conn) = shared.conn.take() {
+            if shared.in_transaction {
+                let _ = conn.rollback();
+                shared.in_transaction = false;
+            }
+            if let Err(e) = conn.close() {
+                eprintln!("Warning: Error closing connection: {e}");
+            }
+        }
+        Ok(())
+    }
 }
 
-/// Connect to a Firebird database
+/// Connect to a Firebird database.
+///
+/// With autocommit=False (default, DB-API behaviour) statements run inside a
+/// transaction that must be ended with conn.commit() or conn.rollback().
+/// With autocommit=True every statement is committed immediately.
 #[pyfunction]
+#[pyo3(signature = (host, database, port=3050, user="SYSDBA", password="masterkey", autocommit=false))]
 fn connect(
     host: &str,
     database: &str,
     port: u16,
     user: &str,
     password: &str,
+    autocommit: bool,
 ) -> PyResult<FirebirdConnection> {
     let connection_info = Arc::new(ConnectionInfo {
         host: host.to_string(),
@@ -570,9 +701,18 @@ fn connect(
         password: password.to_string(),
     });
 
+    // Connect eagerly so that connection errors surface here, not on the
+    // first execute
+    let conn = create_connection(&connection_info)?;
+
     Ok(FirebirdConnection {
         connection_info,
         closed: Arc::new(Mutex::new(false)),
+        shared: Arc::new(Mutex::new(SharedConnection {
+            conn: Some(conn),
+            in_transaction: false,
+        })),
+        autocommit,
     })
 }
 

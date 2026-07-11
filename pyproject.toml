@@ -4,13 +4,18 @@ build-backend = "maturin"
 
 [project]
 name = "fast_firebirdsql"
-version = "0.5.1"
+version = "0.6.0"
 description = "Fast Firebird database queries using Rust - firebirdsql compatible"
 authors = [
     {name = "Janis Blechert", email = "janis@blechert.at"}
 ]
 license = {text = "MIT"}
 requires-python = ">=3.13"
+
+[tool.pytest.ini_options]
+# Only the pytest suite; the legacy print-based scripts in tests/ are not
+# pytest-compatible (module-level DB access, no assertions)
+testpaths = ["tests/suite"]
 
 [tool.maturin]
 features = ["pyo3/extension-module"]

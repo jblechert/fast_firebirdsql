@@ -67,10 +67,16 @@ wheel:
 
 # Test commands
 test: dev-install
+	@echo "🧪 Running pytest suite (read-only)..."
+	$(PYTHON) -m pytest -q
 	@echo "🧪 Running basic functionality tests..."
 	$(PYTHON) tests/test_imports.py
 	$(PYTHON) tests/test_firebirdsql_compatibility.py
 	$(PYTHON) tests/test_rename.py
+
+test-write: dev-install
+	@echo "🧪 Running pytest suite incl. write tests (creates/drops TEST_FAST_FBSQL)..."
+	FIREBIRD_ALLOW_WRITE_TESTS=1 $(PYTHON) -m pytest -q
 
 test-performance: dev-install
 	@echo "🚀 Running comprehensive performance tests..."
