@@ -95,11 +95,26 @@ fn runtime_error(msg: impl Into<String>) -> PyErr {
 /// rsfbclient's buffer coercion, which lets us undo coercion artefacts.
 mod wire_type {
     pub const TEXT: u32 = 452; // CHAR(n)
-    pub const SHORT: u32 = 500;
+    pub const DOUBLE: u32 = 480;
+    pub const FLOAT: u32 = 482;
     pub const LONG: u32 = 496;
-    pub const INT64: u32 = 580;
+    pub const SHORT: u32 = 500;
+    pub const TIMESTAMP: u32 = 510;
     pub const TYPE_TIME: u32 = 560;
     pub const TYPE_DATE: u32 = 570;
+    pub const INT64: u32 = 580;
+    pub const BOOLEAN: u32 = 32764;
+}
+
+/// DB-API description internal_size for fixed-width wire types
+fn wire_internal_size(raw_type: u32) -> Option<i32> {
+    match raw_type {
+        wire_type::SHORT => Some(2),
+        wire_type::LONG | wire_type::FLOAT | wire_type::TYPE_DATE | wire_type::TYPE_TIME => Some(4),
+        wire_type::INT64 | wire_type::DOUBLE | wire_type::TIMESTAMP => Some(8),
+        wire_type::BOOLEAN => Some(1),
+        _ => None, // CHAR/VARCHAR/BLOB: declared length not exposed by rsfbclient
+    }
 }
 
 /// Does the statement contain a top-level RETURNING clause? Skips string
@@ -224,29 +239,6 @@ fn sqltype_to_python(py: Python, raw_type: u32, sql_type: SqlType) -> PyResult<P
         // data (e.g. BLOB SUB_TYPE 0) must come back as bytes
         SqlType::Binary(bytes) => Ok(PyBytes::new_bound(py, &bytes).to_object(py)),
         SqlType::Null => Ok(py.None()),
-    }
-}
-
-/// DB-API type_code string for a column value
-fn sqltype_type_code(raw_type: u32, sql_type: &SqlType) -> Option<&'static str> {
-    match sql_type {
-        SqlType::Text(_) => Some("TEXT"),
-        SqlType::Integer(_) => Some("INTEGER"),
-        SqlType::Floating(_) => {
-            if matches!(raw_type, wire_type::SHORT | wire_type::LONG | wire_type::INT64) {
-                Some("DECIMAL")
-            } else {
-                Some("FLOAT")
-            }
-        },
-        SqlType::Boolean(_) => Some("BOOLEAN"),
-        SqlType::Timestamp(_) => match raw_type {
-            wire_type::TYPE_DATE => Some("DATE"),
-            wire_type::TYPE_TIME => Some("TIME"),
-            _ => Some("TIMESTAMP"),
-        },
-        SqlType::Binary(_) => Some("BINARY"),
-        SqlType::Null => None,
     }
 }
 
@@ -388,7 +380,7 @@ struct FirebirdCursor {
     current_position: usize,
     total_rows: Option<usize>,
     row_count: i64,
-    column_info: Option<Vec<(String, Option<&'static str>)>>,
+    column_info: Option<Vec<(String, u32)>>,
     last_metrics: Option<QueryMetrics>,
     enable_metrics: bool,
     closed: Arc<Mutex<bool>>,
@@ -502,7 +494,7 @@ impl FirebirdCursor {
                         first
                             .cols
                             .iter()
-                            .map(|c| (c.name.clone(), sqltype_type_code(c.raw_type, &c.value)))
+                            .map(|c| (c.name.clone(), c.raw_type))
                             .collect(),
                     );
                 }
@@ -564,15 +556,20 @@ impl FirebirdCursor {
     }
 
     /// DB-API: sequence of 7-tuples describing the result columns of the
-    /// last SELECT (derived from the first result row; None if no rows)
+    /// last SELECT (derived from the first result row; None if no rows).
+    /// type_code is the numeric Firebird wire type (e.g. 496 for INTEGER),
+    /// matching the firebirdsql driver. precision/scale/null_ok are not
+    /// available through rsfbclient and stay None.
     #[getter]
     #[allow(clippy::type_complexity)]
     fn description(
         &self,
-    ) -> Option<Vec<(String, Option<&'static str>, Option<i32>, Option<i32>, Option<i32>, Option<i32>, Option<bool>)>> {
+    ) -> Option<Vec<(String, u32, Option<i32>, Option<i32>, Option<i32>, Option<i32>, Option<bool>)>> {
         self.column_info.as_ref().map(|cols| {
             cols.iter()
-                .map(|(name, code)| (name.clone(), *code, None, None, None, None, None))
+                .map(|(name, raw_type)| {
+                    (name.clone(), *raw_type, None, wire_internal_size(*raw_type), None, None, None)
+                })
                 .collect()
         })
     }
@@ -1061,6 +1058,11 @@ fn fast_firebirdsql(_py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
 
     // Add version information (single source of truth: Cargo.toml)
     m.add("__version__", env!("CARGO_PKG_VERSION"))?;
+
+    // DB-API 2.0 module attributes
+    m.add("apilevel", "2.0")?;
+    m.add("threadsafety", 1)?; // threads may share the module, not connections
+    m.add("paramstyle", "qmark")?;
 
     Ok(())
 }

@@ -168,6 +168,17 @@ def test_description(conn):
     names = [d[0] for d in cur.description]
     assert names == ["REL_ID", "RDB$CHARACTER_SET_NAME"]
     assert all(len(d) == 7 for d in cur.description)
+    # type_code is the numeric wire type, like firebirdsql:
+    # RDB$RELATION_ID is SMALLINT (500), RDB$CHARACTER_SET_NAME is CHAR (452)
+    assert cur.description[0][1] == 500
+    assert cur.description[1][1] == 452
+    assert cur.description[0][3] == 2  # internal_size of SMALLINT
+
+
+def test_dbapi_module_attributes():
+    assert fast_firebirdsql.apilevel == "2.0"
+    assert fast_firebirdsql.threadsafety == 1
+    assert fast_firebirdsql.paramstyle == "qmark"
 
 
 def test_description_empty_result_is_none(conn):

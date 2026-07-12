@@ -50,8 +50,11 @@ loss). Never interpolate untrusted input into SQL strings.
 ## Known limitations
 
 - `cursor.description` is derived from the first result row; for a SELECT
-  that returns no rows it is `None`. Only column names and coarse type
-  codes are filled in.
+  that returns no rows it is `None`. Since v0.10.0 `type_code` is the
+  numeric Firebird wire type (e.g. 496 for INTEGER, like `firebirdsql`)
+  and `internal_size` is filled for fixed-width types;
+  `precision`/`scale`/`null_ok` are not exposed by rsfbclient and stay
+  `None`.
 - NUMERIC/DECIMAL columns come back as `decimal.Decimal` (since v0.9.0),
   but the value passes through a DOUBLE on the wire, so it is exact only
   up to ~15-16 significant digits. For full-precision reads of larger
