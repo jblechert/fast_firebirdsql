@@ -21,6 +21,10 @@ conn.commit()          # or conn.rollback()
 conn.close()           # closes with rollback of anything uncommitted
 ```
 
+Since v0.7.1 the GIL is released during all database I/O (connect,
+execute, fetch, commit/rollback), so other Python threads keep running
+at full speed while a query is in flight.
+
 ## Transactions
 
 Since v0.6.0 this driver follows DB-API semantics, like `firebirdsql`:

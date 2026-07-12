@@ -315,61 +315,90 @@ impl FirebirdCursor {
         self.row_count = -1;
         self.total_rows = None;
 
-        let mut shared = self.shared.lock().unwrap();
-        if shared.conn.is_none() {
-            shared.conn = Some(create_connection(&self.connection_info)?);
-        }
-        // DB-API: statements run inside a transaction until commit()/rollback(),
-        // unless the connection was opened with autocommit=True
-        if !self.autocommit && !shared.in_transaction {
-            shared
-                .conn
-                .as_mut()
-                .unwrap()
-                .begin_transaction_config(default_transaction_config())
-                .map_err(|e| runtime_error(format!("Failed to begin transaction: {e}")))?;
-            shared.in_transaction = true;
-        }
-        let conn = shared.conn.as_mut().unwrap();
+        // Only the first keyword decides the routing; avoid uppercasing the
+        // whole statement
+        let first_word = sql
+            .split_whitespace()
+            .next()
+            .unwrap_or("")
+            .to_uppercase();
+        let returns_rows = first_word == "SELECT" || first_word == "WITH";
 
-        let sql_upper = sql.trim_start().to_uppercase();
-        if sql_upper.starts_with("SELECT") || sql_upper.starts_with("WITH") {
-            // Statement returns rows
-            let rows: Result<Vec<Row>, _> = conn
-                .query_iter(sql, params)
-                .map_err(|e| runtime_error(e.to_string()))?
-                .collect();
-            let rows = rows.map_err(|e| runtime_error(e.to_string()))?;
+        let mut guard = self.shared.lock().unwrap();
+        let shared: &mut SharedConnection = &mut guard;
+        let info = Arc::clone(&self.connection_info);
+        let autocommit = self.autocommit;
 
-            if let Some(first) = rows.first() {
-                self.column_info = Some(
-                    first
-                        .cols
-                        .iter()
-                        .map(|c| (c.name.clone(), sqltype_type_code(&c.value)))
-                        .collect(),
-                );
+        // All network work (connect, transaction start, execute, fetch)
+        // runs without the GIL so other Python threads keep running
+        let db_result: PyResult<DbResult> = py.allow_threads(move || {
+            if shared.conn.is_none() {
+                shared.conn = Some(create_connection(&info)?);
             }
-
-            let mut result = Vec::with_capacity(rows.len());
-            for row in rows {
-                result.push(self.convert_row_to_python(py, row)?);
+            // DB-API: statements run inside a transaction until
+            // commit()/rollback(), unless autocommit=True was requested
+            if !autocommit && !shared.in_transaction {
+                shared
+                    .conn
+                    .as_mut()
+                    .unwrap()
+                    .begin_transaction_config(default_transaction_config())
+                    .map_err(|e| runtime_error(format!("Failed to begin transaction: {e}")))?;
+                shared.in_transaction = true;
             }
+            let conn = shared.conn.as_mut().unwrap();
 
-            self.row_count = result.len() as i64;
-            self.total_rows = Some(result.len());
-            self.results = Some(result);
-        } else {
-            // Statement does not return rows (INSERT/UPDATE/DELETE/DDL/...)
-            let affected = conn
-                .execute(sql, params)
-                .map_err(|e| runtime_error(e.to_string()))?;
-            self.row_count = affected as i64;
-            self.results = Some(Vec::new());
+            if returns_rows {
+                let rows: Result<Vec<Row>, _> = conn
+                    .query_iter(sql, params)
+                    .map_err(|e| runtime_error(e.to_string()))?
+                    .collect();
+                Ok(DbResult::Rows(rows.map_err(|e| runtime_error(e.to_string()))?))
+            } else {
+                // INSERT/UPDATE/DELETE/DDL/...
+                let affected = conn
+                    .execute(sql, params)
+                    .map_err(|e| runtime_error(e.to_string()))?;
+                Ok(DbResult::Affected(affected))
+            }
+        });
+        drop(guard);
+
+        match db_result? {
+            DbResult::Rows(rows) => {
+                if let Some(first) = rows.first() {
+                    self.column_info = Some(
+                        first
+                            .cols
+                            .iter()
+                            .map(|c| (c.name.clone(), sqltype_type_code(&c.value)))
+                            .collect(),
+                    );
+                }
+
+                let mut result = Vec::with_capacity(rows.len());
+                for row in rows {
+                    result.push(self.convert_row_to_python(py, row)?);
+                }
+
+                self.row_count = result.len() as i64;
+                self.total_rows = Some(result.len());
+                self.results = Some(result);
+            }
+            DbResult::Affected(affected) => {
+                self.row_count = affected as i64;
+                self.results = Some(Vec::new());
+            }
         }
 
         Ok(())
     }
+}
+
+/// Result of the GIL-free database phase of execute_inner
+enum DbResult {
+    Rows(Vec<Row>),
+    Affected(usize),
 }
 
 #[pymethods]
@@ -636,64 +665,73 @@ impl FirebirdConnection {
     }
 
     /// Commit the current transaction
-    fn commit(&self) -> PyResult<()> {
+    fn commit(&self, py: Python<'_>) -> PyResult<()> {
         let closed = self.closed.lock().unwrap();
         if *closed {
             return Err(runtime_error("Connection is closed"));
         }
         drop(closed);
 
-        let mut shared = self.shared.lock().unwrap();
-        if shared.in_transaction {
-            shared
-                .conn
-                .as_mut()
-                .unwrap()
-                .commit()
-                .map_err(|e| runtime_error(format!("Failed to commit transaction: {e}")))?;
-            shared.in_transaction = false;
-        }
-        Ok(())
+        let mut guard = self.shared.lock().unwrap();
+        let shared: &mut SharedConnection = &mut guard;
+        py.allow_threads(move || {
+            if shared.in_transaction {
+                shared
+                    .conn
+                    .as_mut()
+                    .unwrap()
+                    .commit()
+                    .map_err(|e| runtime_error(format!("Failed to commit transaction: {e}")))?;
+                shared.in_transaction = false;
+            }
+            Ok(())
+        })
     }
 
     /// Roll back the current transaction
-    fn rollback(&self) -> PyResult<()> {
+    fn rollback(&self, py: Python<'_>) -> PyResult<()> {
         let closed = self.closed.lock().unwrap();
         if *closed {
             return Err(runtime_error("Connection is closed"));
         }
         drop(closed);
 
-        let mut shared = self.shared.lock().unwrap();
-        if shared.in_transaction {
-            shared
-                .conn
-                .as_mut()
-                .unwrap()
-                .rollback()
-                .map_err(|e| runtime_error(format!("Failed to roll back transaction: {e}")))?;
-            shared.in_transaction = false;
-        }
-        Ok(())
+        let mut guard = self.shared.lock().unwrap();
+        let shared: &mut SharedConnection = &mut guard;
+        py.allow_threads(move || {
+            if shared.in_transaction {
+                shared
+                    .conn
+                    .as_mut()
+                    .unwrap()
+                    .rollback()
+                    .map_err(|e| runtime_error(format!("Failed to roll back transaction: {e}")))?;
+                shared.in_transaction = false;
+            }
+            Ok(())
+        })
     }
 
     /// Close the connection. An open transaction is rolled back (DB-API).
-    fn close(&self) -> PyResult<()> {
+    fn close(&self, py: Python<'_>) -> PyResult<()> {
         {
             let mut closed = self.closed.lock().unwrap();
             *closed = true;
         }
 
-        let mut shared = self.shared.lock().unwrap();
-        if let Some(mut conn) = shared.conn.take() {
-            if shared.in_transaction {
-                let _ = conn.rollback();
-                shared.in_transaction = false;
+        let mut guard = self.shared.lock().unwrap();
+        let shared: &mut SharedConnection = &mut guard;
+        py.allow_threads(move || {
+            if let Some(mut conn) = shared.conn.take() {
+                if shared.in_transaction {
+                    let _ = conn.rollback();
+                    shared.in_transaction = false;
+                }
+                if let Err(e) = conn.close() {
+                    eprintln!("Warning: Error closing connection: {e}");
+                }
             }
-            if let Err(e) = conn.close() {
-                eprintln!("Warning: Error closing connection: {e}");
-            }
-        }
+        });
         Ok(())
     }
 }
@@ -706,6 +744,7 @@ impl FirebirdConnection {
 #[pyfunction]
 #[pyo3(signature = (host, database, port=3050, user="SYSDBA", password="masterkey", autocommit=false))]
 fn connect(
+    py: Python<'_>,
     host: &str,
     database: &str,
     port: u16,
@@ -722,8 +761,11 @@ fn connect(
     });
 
     // Connect eagerly so that connection errors surface here, not on the
-    // first execute
-    let conn = create_connection(&connection_info)?;
+    // first execute; the handshake runs without the GIL
+    let conn = {
+        let info = Arc::clone(&connection_info);
+        py.allow_threads(move || create_connection(&info))?
+    };
 
     Ok(FirebirdConnection {
         connection_info,
