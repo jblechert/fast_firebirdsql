@@ -23,10 +23,9 @@ classifiers = [
     "Operating System :: Microsoft :: Windows",
 ]
 
-# Fill in once the public repository exists, then rebuild the wheels:
-# [project.urls]
-# Repository = "https://github.com/<owner>/fast_firebirdsql"
-# Issues = "https://github.com/<owner>/fast_firebirdsql/issues"
+[project.urls]
+Repository = "https://github.com/jblechert/fast_firebirdsql"
+Issues = "https://github.com/jblechert/fast_firebirdsql/issues"
 
 [tool.pytest.ini_options]
 testpaths = ["tests/suite"]
