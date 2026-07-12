@@ -192,6 +192,20 @@ def test_wide_select(conn):
     assert [d[0] for d in cur.description] == [f"C{i}" for i in range(n)]
 
 
+def test_stmt_cache_size_option():
+    # size 1 forces statement-cache eviction on every alternation
+    conn = fast_firebirdsql.connect(**DB_CONFIG, stmt_cache_size=1)
+    try:
+        cur = conn.cursor()
+        for _ in range(3):
+            cur.execute("SELECT 1 FROM RDB$DATABASE")
+            assert cur.fetchall() == [(1,)]
+            cur.execute("SELECT 2 FROM RDB$DATABASE")
+            assert cur.fetchall() == [(2,)]
+    finally:
+        conn.close()
+
+
 def test_multiple_cursors_share_connection(conn):
     c1 = conn.cursor()
     c2 = conn.cursor()

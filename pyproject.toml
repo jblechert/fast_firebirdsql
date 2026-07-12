@@ -4,7 +4,7 @@ build-backend = "maturin"
 
 [project]
 name = "fast_firebirdsql"
-version = "0.7.1"
+version = "0.8.0"
 description = "Fast Firebird database queries using Rust - firebirdsql compatible"
 readme = "README.md"
 authors = [

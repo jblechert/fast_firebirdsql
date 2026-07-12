@@ -223,6 +223,7 @@ struct ConnectionInfo {
     port: u16,
     user: String,
     password: String,
+    stmt_cache_size: usize,
 }
 
 /// Connection state shared between a FirebirdConnection and all its cursors
@@ -251,6 +252,7 @@ fn create_connection(info: &ConnectionInfo) -> PyResult<SimpleConnection> {
         .db_name(&info.database)
         .user(&info.user)
         .pass(&info.password)
+        .stmt_cache_size(info.stmt_cache_size)
         .transaction(default_transaction_config())
         .connect()
         .map_err(|e| runtime_error(e.to_string()))?;
@@ -741,8 +743,12 @@ impl FirebirdConnection {
 /// With autocommit=False (default, DB-API behaviour) statements run inside a
 /// transaction that must be ended with conn.commit() or conn.rollback().
 /// With autocommit=True every statement is committed immediately.
+///
+/// stmt_cache_size (default 20) is the number of prepared statements kept
+/// per connection (LRU); raise it for workloads with many distinct queries.
 #[pyfunction]
-#[pyo3(signature = (host, database, port=3050, user="SYSDBA", password="masterkey", autocommit=false))]
+#[pyo3(signature = (host, database, port=3050, user="SYSDBA", password="masterkey", autocommit=false, stmt_cache_size=20))]
+#[allow(clippy::too_many_arguments)] // mirrors the Python keyword API
 fn connect(
     py: Python<'_>,
     host: &str,
@@ -751,6 +757,7 @@ fn connect(
     user: &str,
     password: &str,
     autocommit: bool,
+    stmt_cache_size: usize,
 ) -> PyResult<FirebirdConnection> {
     let connection_info = Arc::new(ConnectionInfo {
         host: host.to_string(),
@@ -758,6 +765,7 @@ fn connect(
         port,
         user: user.to_string(),
         password: password.to_string(),
+        stmt_cache_size: stmt_cache_size.max(1),
     });
 
     // Connect eagerly so that connection errors surface here, not on the

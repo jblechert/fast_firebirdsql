@@ -25,6 +25,11 @@ Since v0.7.1 the GIL is released during all database I/O (connect,
 execute, fetch, commit/rollback), so other Python threads keep running
 at full speed while a query is in flight.
 
+Each connection keeps an LRU cache of prepared statements (the source
+of the driver's speed advantage on repeated queries). The default size
+is 20; workloads alternating between more distinct SQL strings should
+raise it: `connect(..., stmt_cache_size=100)`.
+
 ## Transactions
 
 Since v0.6.0 this driver follows DB-API semantics, like `firebirdsql`:
