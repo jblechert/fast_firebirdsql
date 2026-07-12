@@ -6,11 +6,27 @@ build-backend = "maturin"
 name = "fast_firebirdsql"
 version = "0.7.0"
 description = "Fast Firebird database queries using Rust - firebirdsql compatible"
+readme = "README.md"
 authors = [
     {name = "Janis Blechert", email = "janis@blechert.at"}
 ]
 license = {text = "MIT"}
 requires-python = ">=3.13"
+keywords = ["firebird", "database", "driver", "dbapi", "rust"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Rust",
+    "Topic :: Database",
+    "Operating System :: POSIX :: Linux",
+    "Operating System :: Microsoft :: Windows",
+]
+
+# Fill in once the public repository exists, then rebuild the wheels:
+# [project.urls]
+# Repository = "https://github.com/<owner>/fast_firebirdsql"
+# Issues = "https://github.com/<owner>/fast_firebirdsql/issues"
 
 [tool.pytest.ini_options]
 testpaths = ["tests/suite"]
@@ -20,9 +36,10 @@ markers = [
 
 [tool.maturin]
 features = ["pyo3/extension-module"]
-# Include Windows DLLs and setup script in the wheel
+# Include Windows DLLs, setup script and third-party notices in the wheel
 include = [
     { path = "windows-firebird/fbclient.dll", format = "wheel" },
     { path = "windows-firebird/python313.dll", format = "wheel" },
-    { path = "setup_windows_dlls.py", format = "wheel" }
+    { path = "setup_windows_dlls.py", format = "wheel" },
+    { path = "THIRD-PARTY-NOTICES.md", format = "wheel" }
 ]

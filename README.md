@@ -118,4 +118,7 @@ cp .env.example .env   # then edit the values
 
 ## License
 
-MIT — see [LICENSE](LICENSE).
+MIT — see [LICENSE](LICENSE). The wheels redistribute third-party
+binaries (Firebird client library under IDPL/IPL, `python313.dll` under
+PSF-2.0, LibTomMath under the Unlicense) — see
+[THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md).
