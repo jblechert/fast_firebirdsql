@@ -78,8 +78,42 @@ def test_date_param(conn):
     d = datetime.date(2026, 7, 11)
     cur.execute("SELECT CAST(? AS DATE) FROM RDB$DATABASE", (d,))
     result = cur.fetchall()[0][0]
-    # DATE columns come back as datetime at midnight
-    assert result == datetime.datetime(2026, 7, 11, 0, 0, 0)
+    # since v0.9.0 DATE columns come back as datetime.date, like firebirdsql
+    assert result == d and not isinstance(result, datetime.datetime)
+
+
+def test_date_time_column_types(conn):
+    cur = conn.cursor()
+    cur.execute(
+        "SELECT CAST('2026-07-12' AS DATE), CAST('12:30:45' AS TIME), CURRENT_TIMESTAMP "
+        "FROM RDB$DATABASE"
+    )
+    d, t, ts = cur.fetchall()[0]
+    assert d == datetime.date(2026, 7, 12) and not isinstance(d, datetime.datetime)
+    assert t == datetime.time(12, 30, 45)
+    assert isinstance(ts, datetime.datetime)
+
+
+def test_numeric_returns_decimal(conn):
+    import decimal
+    cur = conn.cursor()
+    cur.execute(
+        "SELECT CAST('12345678.1234' AS NUMERIC(18,4)), "
+        "CAST('0.1' AS NUMERIC(9,2)) + CAST('0.2' AS NUMERIC(9,2)), "
+        "CAST(1.5 AS DOUBLE PRECISION) FROM RDB$DATABASE"
+    )
+    numeric, summed, dbl = cur.fetchall()[0]
+    assert numeric == decimal.Decimal("12345678.1234") and isinstance(numeric, decimal.Decimal)
+    assert summed == decimal.Decimal("0.3") and isinstance(summed, decimal.Decimal)
+    assert isinstance(dbl, float)  # true DOUBLE stays float
+
+
+def test_char_rtrim(conn):
+    cur = conn.cursor()
+    cur.execute("SELECT CAST('abc' AS CHAR(10)), CAST('abc ' AS VARCHAR(10)) FROM RDB$DATABASE")
+    char_val, varchar_val = cur.fetchall()[0]
+    assert char_val == "abc"      # CHAR padding trimmed, like firebirdsql
+    assert varchar_val == "abc "  # VARCHAR content untouched
 
 
 def test_decimal_param_exact(conn):
@@ -317,17 +351,41 @@ def test_autocommit_mode(autocommit_conn, test_table, conn):
 
 @requires_write
 def test_decimal_column_roundtrip(conn, test_table):
-    # Storage is exact (verified via VARCHAR cast); reading the column
-    # directly yields float — a documented limitation of rsfbclient
     import decimal
     d = decimal.Decimal("4711.0815")
     cur = conn.cursor()
     cur.execute(f"INSERT INTO {test_table} (ID, AMOUNT) VALUES (?, ?)", (1, d))
     cur.execute(f"SELECT CAST(AMOUNT AS VARCHAR(30)) FROM {test_table}")
     assert decimal.Decimal(cur.fetchall()[0][0]) == d
+    # since v0.9.0: NUMERIC columns come back as Decimal, like firebirdsql
     cur.execute(f"SELECT AMOUNT FROM {test_table}")
     value = cur.fetchall()[0][0]
-    assert isinstance(value, float) and abs(value - float(d)) < 1e-9
+    assert isinstance(value, decimal.Decimal) and value == d
+    conn.rollback()
+
+
+@requires_write
+def test_insert_returning(conn, test_table):
+    cur = conn.cursor()
+    cur.execute(
+        f"INSERT INTO {test_table} (ID, NAME) VALUES (?, ?) RETURNING ID, NAME",
+        (42, "neu"),
+    )
+    assert cur.fetchone() == (42, "neu")
+    assert cur.rowcount == 1
+    conn.rollback()
+
+
+@requires_write
+def test_update_returning(conn, test_table):
+    cur = conn.cursor()
+    cur.execute(f"INSERT INTO {test_table} (ID, NAME) VALUES (?, ?)", (1, "alt"))
+    cur.execute(f"UPDATE {test_table} SET NAME = ? WHERE ID = ? RETURNING NAME", ("neu", 1))
+    assert cur.fetchone() == ("neu",)
+    # 'returning' inside a string literal must not trigger the RETURNING path
+    cur.execute(f"UPDATE {test_table} SET NAME = 'returning' WHERE ID = ?", (1,))
+    assert cur.rowcount == 1
+    assert cur.fetchall() == []
     conn.rollback()
 
 

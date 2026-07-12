@@ -1,7 +1,7 @@
 use pyo3::exceptions::{PyRuntimeError, PyTypeError};
 use pyo3::prelude::*;
 use pyo3::sync::GILOnceCell;
-use pyo3::types::{PyBool, PyBytes, PyDate, PyDateAccess, PyDateTime, PyDict, PyTimeAccess, PyTuple, PyType};
+use pyo3::types::{PyBool, PyBytes, PyDate, PyDateAccess, PyDateTime, PyDict, PyTime, PyTimeAccess, PyTuple, PyType};
 use rsfbclient::prelude::*;
 use rsfbclient::{Row, SimpleConnection, SqlType};
 use chrono::{Datelike, NaiveDate, NaiveDateTime, Timelike};
@@ -90,26 +90,135 @@ fn runtime_error(msg: impl Into<String>) -> PyErr {
     PyErr::new::<PyRuntimeError, _>(msg.into())
 }
 
-/// Convert a Firebird column value to the corresponding Python object
-fn sqltype_to_python(py: Python, sql_type: SqlType) -> PyResult<PyObject> {
+/// Firebird wire types as they appear in Column::raw_type (nullable bit
+/// stripped). raw_type preserves the column's declared type from before
+/// rsfbclient's buffer coercion, which lets us undo coercion artefacts.
+mod wire_type {
+    pub const TEXT: u32 = 452; // CHAR(n)
+    pub const SHORT: u32 = 500;
+    pub const LONG: u32 = 496;
+    pub const INT64: u32 = 580;
+    pub const TYPE_TIME: u32 = 560;
+    pub const TYPE_DATE: u32 = 570;
+}
+
+/// Does the statement contain a top-level RETURNING clause? Skips string
+/// literals, quoted identifiers and comments so that e.g.
+/// `... SET note = 'returning soon'` does not count.
+fn contains_returning(sql: &str) -> bool {
+    let bytes = sql.as_bytes();
+    let mut i = 0;
+    while i < bytes.len() {
+        match bytes[i] {
+            b'\'' | b'"' => {
+                let quote = bytes[i];
+                i += 1;
+                while i < bytes.len() {
+                    if bytes[i] == quote {
+                        if bytes.get(i + 1) == Some(&quote) {
+                            i += 2; // escaped quote ('' or "")
+                            continue;
+                        }
+                        break;
+                    }
+                    i += 1;
+                }
+                i += 1;
+            }
+            b'-' if bytes.get(i + 1) == Some(&b'-') => {
+                while i < bytes.len() && bytes[i] != b'\n' {
+                    i += 1;
+                }
+            }
+            b'/' if bytes.get(i + 1) == Some(&b'*') => {
+                i += 2;
+                while i + 1 < bytes.len() && !(bytes[i] == b'*' && bytes[i + 1] == b'/') {
+                    i += 1;
+                }
+                i += 2;
+            }
+            c if c.is_ascii_alphabetic() || c == b'_' => {
+                let start = i;
+                while i < bytes.len()
+                    && (bytes[i].is_ascii_alphanumeric() || bytes[i] == b'_' || bytes[i] == b'$')
+                {
+                    i += 1;
+                }
+                if sql[start..i].eq_ignore_ascii_case("returning") {
+                    return true;
+                }
+            }
+            _ => i += 1,
+        }
+    }
+    false
+}
+
+/// Convert a Firebird column value to the corresponding Python object.
+///
+/// raw_type is the column's declared wire type; it lets us undo the
+/// coercions rsfbclient applies to the fetch buffers:
+/// - CHAR(n) is space-padded by the server -> trim trailing spaces
+/// - NUMERIC/DECIMAL is coerced to DOUBLE -> reconstruct decimal.Decimal
+/// - DATE and TIME are coerced to TIMESTAMP -> datetime.date / time
+fn sqltype_to_python(py: Python, raw_type: u32, sql_type: SqlType) -> PyResult<PyObject> {
     match sql_type {
-        SqlType::Text(s) => Ok(s.to_object(py)),
+        SqlType::Text(s) => {
+            if raw_type == wire_type::TEXT {
+                // CHAR(n): the server pads with spaces; firebirdsql trims
+                Ok(s.trim_end_matches(' ').to_object(py))
+            } else {
+                Ok(s.to_object(py))
+            }
+        },
         SqlType::Integer(i) => Ok(i.to_object(py)),
-        SqlType::Floating(f) => Ok(f.to_object(py)),
+        SqlType::Floating(f) => {
+            if matches!(raw_type, wire_type::SHORT | wire_type::LONG | wire_type::INT64) {
+                // Declared as an integer type but arrived as a float: this
+                // is a NUMERIC/DECIMAL column that rsfbclient coerced to
+                // DOUBLE. Reconstruct a decimal.Decimal from the shortest
+                // round-trip representation. Exact up to the ~15-16
+                // significant digits a double can carry.
+                let s = format!("{f}");
+                let d = decimal_type(py)?.bind(py).call1((s,))?;
+                Ok(d.to_object(py))
+            } else {
+                Ok(f.to_object(py))
+            }
+        },
         SqlType::Boolean(b) => Ok(b.to_object(py)),
         SqlType::Timestamp(dt) => {
-            let py_datetime = PyDateTime::new_bound(
-                py,
-                dt.year(),
-                dt.month() as u8,
-                dt.day() as u8,
-                dt.hour() as u8,
-                dt.minute() as u8,
-                dt.second() as u8,
-                dt.nanosecond() / 1000,
-                None,
-            )?;
-            Ok(py_datetime.to_object(py))
+            match raw_type {
+                wire_type::TYPE_DATE => {
+                    let py_date = PyDate::new_bound(py, dt.year(), dt.month() as u8, dt.day() as u8)?;
+                    Ok(py_date.to_object(py))
+                }
+                wire_type::TYPE_TIME => {
+                    let py_time = PyTime::new_bound(
+                        py,
+                        dt.hour() as u8,
+                        dt.minute() as u8,
+                        dt.second() as u8,
+                        dt.nanosecond() / 1000,
+                        None,
+                    )?;
+                    Ok(py_time.to_object(py))
+                }
+                _ => {
+                    let py_datetime = PyDateTime::new_bound(
+                        py,
+                        dt.year(),
+                        dt.month() as u8,
+                        dt.day() as u8,
+                        dt.hour() as u8,
+                        dt.minute() as u8,
+                        dt.second() as u8,
+                        dt.nanosecond() / 1000,
+                        None,
+                    )?;
+                    Ok(py_datetime.to_object(py))
+                }
+            }
         },
         // Vec<u8>.to_object() would produce a Python list of ints; binary
         // data (e.g. BLOB SUB_TYPE 0) must come back as bytes
@@ -119,13 +228,23 @@ fn sqltype_to_python(py: Python, sql_type: SqlType) -> PyResult<PyObject> {
 }
 
 /// DB-API type_code string for a column value
-fn sqltype_type_code(sql_type: &SqlType) -> Option<&'static str> {
+fn sqltype_type_code(raw_type: u32, sql_type: &SqlType) -> Option<&'static str> {
     match sql_type {
         SqlType::Text(_) => Some("TEXT"),
         SqlType::Integer(_) => Some("INTEGER"),
-        SqlType::Floating(_) => Some("FLOAT"),
+        SqlType::Floating(_) => {
+            if matches!(raw_type, wire_type::SHORT | wire_type::LONG | wire_type::INT64) {
+                Some("DECIMAL")
+            } else {
+                Some("FLOAT")
+            }
+        },
         SqlType::Boolean(_) => Some("BOOLEAN"),
-        SqlType::Timestamp(_) => Some("TIMESTAMP"),
+        SqlType::Timestamp(_) => match raw_type {
+            wire_type::TYPE_DATE => Some("DATE"),
+            wire_type::TYPE_TIME => Some("TIME"),
+            _ => Some("TIMESTAMP"),
+        },
         SqlType::Binary(_) => Some("BINARY"),
         SqlType::Null => None,
     }
@@ -301,7 +420,7 @@ impl FirebirdCursor {
         let mut values = Vec::with_capacity(row.cols.len());
 
         for column in row.cols.into_iter() {
-            values.push(sqltype_to_python(py, column.value)?);
+            values.push(sqltype_to_python(py, column.raw_type, column.value)?);
         }
 
         let tuple = PyTuple::new_bound(py, values);
@@ -325,6 +444,11 @@ impl FirebirdCursor {
             .unwrap_or("")
             .to_uppercase();
         let returns_rows = first_word == "SELECT" || first_word == "WITH";
+        // INSERT/UPDATE/DELETE/MERGE ... RETURNING yields a single row via
+        // a different protocol op (execute2)
+        let has_returning = !returns_rows
+            && matches!(first_word.as_str(), "INSERT" | "UPDATE" | "DELETE" | "MERGE")
+            && contains_returning(sql);
 
         let mut guard = self.shared.lock().unwrap();
         let shared: &mut SharedConnection = &mut guard;
@@ -356,6 +480,11 @@ impl FirebirdCursor {
                     .map_err(|e| runtime_error(e.to_string()))?
                     .collect();
                 Ok(DbResult::Rows(rows.map_err(|e| runtime_error(e.to_string()))?))
+            } else if has_returning {
+                let row: Row = conn
+                    .execute_returnable(sql, params)
+                    .map_err(|e| runtime_error(e.to_string()))?;
+                Ok(DbResult::Rows(vec![row]))
             } else {
                 // INSERT/UPDATE/DELETE/DDL/...
                 let affected = conn
@@ -373,7 +502,7 @@ impl FirebirdCursor {
                         first
                             .cols
                             .iter()
-                            .map(|c| (c.name.clone(), sqltype_type_code(&c.value)))
+                            .map(|c| (c.name.clone(), sqltype_type_code(c.raw_type, &c.value)))
                             .collect(),
                     );
                 }

@@ -52,10 +52,14 @@ loss). Never interpolate untrusted input into SQL strings.
 - `cursor.description` is derived from the first result row; for a SELECT
   that returns no rows it is `None`. Only column names and coarse type
   codes are filled in.
-- **Reading NUMERIC/DECIMAL columns yields `float`, not `decimal.Decimal`**
-  (rsfbclient coerces them to DOUBLE on the wire) — unlike the pure-Python
-  `firebirdsql` driver. Writing `Decimal` parameters is exact; for exact
-  reads use `CAST(col AS VARCHAR(...))` and convert in Python.
+- NUMERIC/DECIMAL columns come back as `decimal.Decimal` (since v0.9.0),
+  but the value passes through a DOUBLE on the wire, so it is exact only
+  up to ~15-16 significant digits. For full-precision reads of larger
+  values use `CAST(col AS VARCHAR(...))`.
+- `INSERT/UPDATE/DELETE ... RETURNING` returns its row (since v0.9.0) and
+  sets `rowcount = 1`. Deviation from `firebirdsql`: an UPDATE/DELETE
+  RETURNING that matches no row yields an all-`None` tuple instead of
+  `None` from `fetchone()`.
 - BLOB columns work since v0.6.1: `BLOB SUB_TYPE TEXT` maps to `str`,
   `BLOB SUB_TYPE 0` (binary) to `bytes` — both directions. Only internal
   BLR metadata blobs (subtype 2, e.g. `RDB$VIEW_BLR`) cannot be read, so
@@ -65,6 +69,17 @@ loss). Never interpolate untrusted input into SQL strings.
   return result rows.
 - **Build currently requires Python ≤ 3.13** (PyO3 0.22). Production runs
   3.13, so this is not a blocker; on newer interpreters the build fails.
+
+## Behaviour changes in v0.9.0 (drop-in compatibility with firebirdsql)
+
+- `INSERT/UPDATE/DELETE ... RETURNING` returns the row (previously the
+  RETURNING values were silently discarded).
+- NUMERIC/DECIMAL columns are returned as `decimal.Decimal` (previously
+  `float`).
+- DATE columns are returned as `datetime.date`, TIME columns as
+  `datetime.time` (previously both as `datetime.datetime`).
+- CHAR(n) values are right-trimmed like `firebirdsql` (previously
+  space-padded to the declared length).
 
 ## Behaviour changes in v0.6.0
 
