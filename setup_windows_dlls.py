@@ -66,8 +66,9 @@ def setup_windows_dlls():
     
     print(f"Found Windows DLLs at: {windows_firebird_dir}")
     
-    # Copy DLLs to package directory
-    dlls_to_copy = ["fbclient.dll", "python313.dll"]
+    # Copy DLLs to package directory (since the abi3 wheels, only
+    # fbclient.dll is bundled; python3.dll comes with CPython itself)
+    dlls_to_copy = ["fbclient.dll"]
     copied_dlls = []
     
     for dll_name in dlls_to_copy:

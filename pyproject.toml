@@ -4,7 +4,7 @@ build-backend = "maturin"
 
 [project]
 name = "fast_firebirdsql"
-version = "0.10.0"
+version = "0.11.0"
 description = "Fast Firebird database queries using Rust - firebirdsql compatible"
 readme = "README.md"
 authors = [
@@ -35,10 +35,10 @@ markers = [
 
 [tool.maturin]
 features = ["pyo3/extension-module"]
-# Include Windows DLLs, setup script and third-party notices in the wheel
+# Include the Firebird client DLL, setup script and third-party notices
+# in the wheel (abi3 links python3.dll, which every CPython install has)
 include = [
     { path = "windows-firebird/fbclient.dll", format = "wheel" },
-    { path = "windows-firebird/python313.dll", format = "wheel" },
     { path = "setup_windows_dlls.py", format = "wheel" },
     { path = "THIRD-PARTY-NOTICES.md", format = "wheel" }
 ]

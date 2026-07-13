@@ -70,8 +70,8 @@ loss). Never interpolate untrusted input into SQL strings.
   `Unsupported column type (520 2)`.
 - Statements are routed by their first keyword: only `SELECT`/`WITH`
   return result rows.
-- **Build currently requires Python ≤ 3.13** (PyO3 0.22). Production runs
-  3.13, so this is not a blocker; on newer interpreters the build fails.
+- Wheels use the stable ABI (`cp313-abi3`, since v0.11.0): one wheel per
+  platform runs on every CPython ≥ 3.13, including future versions.
 
 ## Behaviour changes in v0.9.0 (drop-in compatibility with firebirdsql)
 

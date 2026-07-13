@@ -1,10 +1,11 @@
 use pyo3::exceptions::{PyRuntimeError, PyTypeError};
 use pyo3::prelude::*;
-use pyo3::sync::GILOnceCell;
-use pyo3::types::{PyBool, PyBytes, PyDate, PyDateAccess, PyDateTime, PyDict, PyTime, PyTimeAccess, PyTuple, PyType};
+use pyo3::sync::PyOnceLock;
+use pyo3::types::{PyBool, PyBytes, PyDict, PyTuple, PyType};
+use pyo3::IntoPyObjectExt;
 use rsfbclient::prelude::*;
 use rsfbclient::{Row, SimpleConnection, SqlType};
-use chrono::{Datelike, NaiveDate, NaiveDateTime, Timelike};
+use chrono::{NaiveDate, NaiveDateTime};
 use std::collections::HashMap;
 use std::sync::{Arc, LazyLock, Mutex};
 use std::time::{Duration, Instant};
@@ -21,8 +22,8 @@ struct QueryMetrics {
 }
 
 impl QueryMetrics {
-    fn to_python_dict(&self, py: Python) -> PyResult<PyObject> {
-        let dict = PyDict::new_bound(py);
+    fn to_python_dict(&self, py: Python) -> PyResult<Py<PyAny>> {
+        let dict = PyDict::new(py);
 
         if let Some(conn_time) = self.connection_time {
             dict.set_item("connection_time_ms", conn_time.as_millis())?;
@@ -43,7 +44,7 @@ impl QueryMetrics {
             dict.set_item("rows_per_second", rows_per_second)?;
         }
 
-        Ok(dict.to_object(py))
+        dict.into_py_any(py)
     }
 }
 
@@ -52,7 +53,7 @@ static PERFORMANCE_METRICS: LazyLock<Mutex<HashMap<String, Vec<QueryMetrics>>>> 
     LazyLock::new(|| Mutex::new(HashMap::new()));
 
 /// Type conversion cache for common values to reduce allocations
-static TYPE_CONVERSION_CACHE: LazyLock<Mutex<HashMap<String, PyObject>>> =
+static TYPE_CONVERSION_CACHE: LazyLock<Mutex<HashMap<String, Py<PyAny>>>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
 
 /// Query cache entry (statistics only; rsfbclient maintains the real statement cache)
@@ -176,17 +177,17 @@ fn contains_returning(sql: &str) -> bool {
 /// - CHAR(n) is space-padded by the server -> trim trailing spaces
 /// - NUMERIC/DECIMAL is coerced to DOUBLE -> reconstruct decimal.Decimal
 /// - DATE and TIME are coerced to TIMESTAMP -> datetime.date / time
-fn sqltype_to_python(py: Python, raw_type: u32, sql_type: SqlType) -> PyResult<PyObject> {
+fn sqltype_to_python(py: Python, raw_type: u32, sql_type: SqlType) -> PyResult<Py<PyAny>> {
     match sql_type {
         SqlType::Text(s) => {
             if raw_type == wire_type::TEXT {
                 // CHAR(n): the server pads with spaces; firebirdsql trims
-                Ok(s.trim_end_matches(' ').to_object(py))
+                s.trim_end_matches(' ').into_py_any(py)
             } else {
-                Ok(s.to_object(py))
+                s.into_py_any(py)
             }
         },
-        SqlType::Integer(i) => Ok(i.to_object(py)),
+        SqlType::Integer(i) => i.into_py_any(py),
         SqlType::Floating(f) => {
             if matches!(raw_type, wire_type::SHORT | wire_type::LONG | wire_type::INT64) {
                 // Declared as an integer type but arrived as a float: this
@@ -196,59 +197,32 @@ fn sqltype_to_python(py: Python, raw_type: u32, sql_type: SqlType) -> PyResult<P
                 // significant digits a double can carry.
                 let s = format!("{f}");
                 let d = decimal_type(py)?.bind(py).call1((s,))?;
-                Ok(d.to_object(py))
+                Ok(d.unbind())
             } else {
-                Ok(f.to_object(py))
+                f.into_py_any(py)
             }
         },
-        SqlType::Boolean(b) => Ok(b.to_object(py)),
-        SqlType::Timestamp(dt) => {
-            match raw_type {
-                wire_type::TYPE_DATE => {
-                    let py_date = PyDate::new_bound(py, dt.year(), dt.month() as u8, dt.day() as u8)?;
-                    Ok(py_date.to_object(py))
-                }
-                wire_type::TYPE_TIME => {
-                    let py_time = PyTime::new_bound(
-                        py,
-                        dt.hour() as u8,
-                        dt.minute() as u8,
-                        dt.second() as u8,
-                        dt.nanosecond() / 1000,
-                        None,
-                    )?;
-                    Ok(py_time.to_object(py))
-                }
-                _ => {
-                    let py_datetime = PyDateTime::new_bound(
-                        py,
-                        dt.year(),
-                        dt.month() as u8,
-                        dt.day() as u8,
-                        dt.hour() as u8,
-                        dt.minute() as u8,
-                        dt.second() as u8,
-                        dt.nanosecond() / 1000,
-                        None,
-                    )?;
-                    Ok(py_datetime.to_object(py))
-                }
-            }
+        SqlType::Boolean(b) => b.into_py_any(py),
+        // pyo3's chrono conversions work under the limited API (abi3)
+        SqlType::Timestamp(dt) => match raw_type {
+            wire_type::TYPE_DATE => dt.date().into_py_any(py),
+            wire_type::TYPE_TIME => dt.time().into_py_any(py),
+            _ => dt.into_py_any(py),
         },
         // Vec<u8>.to_object() would produce a Python list of ints; binary
         // data (e.g. BLOB SUB_TYPE 0) must come back as bytes
-        SqlType::Binary(bytes) => Ok(PyBytes::new_bound(py, &bytes).to_object(py)),
+        SqlType::Binary(bytes) => PyBytes::new(py, &bytes).into_py_any(py),
         SqlType::Null => Ok(py.None()),
     }
 }
 
 /// decimal.Decimal, resolved once
-static DECIMAL_TYPE: GILOnceCell<Py<PyType>> = GILOnceCell::new();
+static DECIMAL_TYPE: PyOnceLock<Py<PyType>> = PyOnceLock::new();
 
 fn decimal_type<'py>(py: Python<'py>) -> PyResult<&'py Py<PyType>> {
     DECIMAL_TYPE.get_or_try_init(py, || {
-        let ty = py.import_bound("decimal")?.getattr("Decimal")?;
-        Ok(ty.downcast_into::<PyType>().map_err(PyErr::from)?.unbind())
+        let ty = py.import("decimal")?.getattr("Decimal")?;
+        Ok(ty.cast_into::<PyType>().map_err(PyErr::from)?.unbind())
     })
 }
 
@@ -258,28 +232,16 @@ fn py_param_to_sqltype(obj: &Bound<'_, PyAny>) -> PyResult<SqlType> {
         return Ok(SqlType::Null);
     }
     // bool must be checked before int (bool is a subclass of int in Python)
-    if let Ok(b) = obj.downcast::<PyBool>() {
+    if let Ok(b) = obj.cast::<PyBool>() {
         return Ok(SqlType::Boolean(b.is_true()));
     }
-    // datetime must be checked before date (datetime is a subclass of date)
-    if let Ok(dt) = obj.downcast::<PyDateTime>() {
-        let date = NaiveDate::from_ymd_opt(dt.get_year(), dt.get_month() as u32, dt.get_day() as u32)
-            .ok_or_else(|| PyErr::new::<PyTypeError, _>("invalid date in datetime parameter"))?;
-        let ts = date
-            .and_hms_micro_opt(
-                dt.get_hour() as u32,
-                dt.get_minute() as u32,
-                dt.get_second() as u32,
-                dt.get_microsecond(),
-            )
-            .ok_or_else(|| PyErr::new::<PyTypeError, _>("invalid time in datetime parameter"))?;
-        return Ok(SqlType::Timestamp(ts));
+    // datetime must be checked before date (datetime is a subclass of
+    // date); chrono extraction works under the limited API (abi3)
+    if let Ok(dt) = obj.extract::<NaiveDateTime>() {
+        return Ok(SqlType::Timestamp(dt));
     }
-    if let Ok(d) = obj.downcast::<PyDate>() {
-        let date = NaiveDate::from_ymd_opt(d.get_year(), d.get_month() as u32, d.get_day() as u32)
-            .ok_or_else(|| PyErr::new::<PyTypeError, _>("invalid date parameter"))?;
-        let ts = NaiveDateTime::new(date, chrono::NaiveTime::MIN);
-        return Ok(SqlType::Timestamp(ts));
+    if let Ok(d) = obj.extract::<NaiveDate>() {
+        return Ok(SqlType::Timestamp(NaiveDateTime::new(d, chrono::NaiveTime::MIN)));
     }
     // Decimal must be checked before float: Decimal has __float__, so the
     // f64 extraction below would silently accept it lossily. Sent as a
@@ -297,7 +259,7 @@ fn py_param_to_sqltype(obj: &Bound<'_, PyAny>) -> PyResult<SqlType> {
     if let Ok(s) = obj.extract::<String>() {
         return Ok(SqlType::Text(s));
     }
-    if let Ok(b) = obj.downcast::<PyBytes>() {
+    if let Ok(b) = obj.cast::<PyBytes>() {
         return Ok(SqlType::Binary(b.as_bytes().to_vec()));
     }
     Err(PyErr::new::<PyTypeError, _>(format!(
@@ -315,13 +277,13 @@ fn py_params_to_sqltypes(params: Option<&Bound<'_, PyAny>>) -> PyResult<Vec<SqlT
         return Ok(Vec::new());
     }
     // A bare string/bytes is almost certainly a mistake, not a sequence of params
-    if params.extract::<String>().is_ok() || params.downcast::<PyBytes>().is_ok() {
+    if params.extract::<String>().is_ok() || params.cast::<PyBytes>().is_ok() {
         return Err(PyErr::new::<PyTypeError, _>(
             "params must be a sequence (tuple or list), not a string",
         ));
     }
     let mut values = Vec::new();
-    for item in params.iter()? {
+    for item in params.try_iter()? {
         values.push(py_param_to_sqltype(&item?)?);
     }
     Ok(values)
@@ -376,7 +338,7 @@ struct FirebirdCursor {
     connection_info: Arc<ConnectionInfo>,
     shared: Arc<Mutex<SharedConnection>>,
     autocommit: bool,
-    results: Option<Vec<PyObject>>,
+    results: Option<Vec<Py<PyAny>>>,
     current_position: usize,
     total_rows: Option<usize>,
     row_count: i64,
@@ -408,15 +370,15 @@ impl FirebirdCursor {
     }
 
     /// Convert a Firebird row to a Python tuple
-    fn convert_row_to_python(&self, py: Python, row: Row) -> PyResult<PyObject> {
+    fn convert_row_to_python(&self, py: Python, row: Row) -> PyResult<Py<PyAny>> {
         let mut values = Vec::with_capacity(row.cols.len());
 
         for column in row.cols.into_iter() {
             values.push(sqltype_to_python(py, column.raw_type, column.value)?);
         }
 
-        let tuple = PyTuple::new_bound(py, values);
-        Ok(tuple.to_object(py))
+        let tuple = PyTuple::new(py, values)?;
+        tuple.into_py_any(py)
     }
 
     /// Execute a statement on the shared connection, starting a transaction if needed
@@ -449,7 +411,7 @@ impl FirebirdCursor {
 
         // All network work (connect, transaction start, execute, fetch)
         // runs without the GIL so other Python threads keep running
-        let db_result: PyResult<DbResult> = py.allow_threads(move || {
+        let db_result: PyResult<DbResult> = py.detach(move || {
             if shared.conn.is_none() {
                 shared.conn = Some(create_connection(&info)?);
             }
@@ -537,7 +499,7 @@ impl FirebirdCursor {
     fn executemany(&mut self, py: Python<'_>, sql: &str, param_sets: &Bound<'_, PyAny>) -> PyResult<()> {
         let mut total: i64 = 0;
         let mut executed = false;
-        for params in param_sets.iter()? {
+        for params in param_sets.try_iter()? {
             let params = py_params_to_sqltypes(Some(&params?))?;
             self.execute_inner(py, sql, params)?;
             executed = true;
@@ -582,7 +544,7 @@ impl FirebirdCursor {
     }
 
     /// Fetch all results from the last executed query
-    fn fetchall(&mut self) -> PyResult<Vec<PyObject>> {
+    fn fetchall(&mut self) -> PyResult<Vec<Py<PyAny>>> {
         match self.results.take() {
             Some(results) => {
                 self.current_position = results.len();
@@ -593,10 +555,10 @@ impl FirebirdCursor {
     }
 
     /// Fetch one row from the result set
-    fn fetchone(&mut self) -> PyResult<Option<PyObject>> {
+    fn fetchone(&mut self) -> PyResult<Option<Py<PyAny>>> {
         if let Some(ref results) = self.results {
             if self.current_position < results.len() {
-                Python::with_gil(|py| {
+                Python::attach(|py| {
                     let row = results[self.current_position].clone_ref(py);
                     self.current_position += 1;
                     Ok(Some(row))
@@ -611,7 +573,7 @@ impl FirebirdCursor {
 
     /// Fetch multiple rows from the result set
     #[pyo3(signature = (size=None))]
-    fn fetchmany(&mut self, size: Option<usize>) -> PyResult<Vec<PyObject>> {
+    fn fetchmany(&mut self, size: Option<usize>) -> PyResult<Vec<Py<PyAny>>> {
         let fetch_size = size.unwrap_or(self.chunk_size);
 
         if let Some(ref results) = self.results {
@@ -619,8 +581,8 @@ impl FirebirdCursor {
             let end = (start + fetch_size).min(results.len());
 
             if start < end {
-                Python::with_gil(|py| {
-                    let rows: Vec<PyObject> = results[start..end]
+                Python::attach(|py| {
+                    let rows: Vec<Py<PyAny>> = results[start..end]
                         .iter()
                         .map(|obj| obj.clone_ref(py))
                         .collect();
@@ -652,8 +614,8 @@ impl FirebirdCursor {
     }
 
     /// Get performance metrics from the last executed query
-    fn get_last_metrics(&self) -> PyResult<Option<PyObject>> {
-        Python::with_gil(|py| {
+    fn get_last_metrics(&self) -> PyResult<Option<Py<PyAny>>> {
+        Python::attach(|py| {
             match &self.last_metrics {
                 Some(metrics) => Ok(Some(metrics.to_python_dict(py)?)),
                 None => Ok(None),
@@ -686,9 +648,9 @@ impl FirebirdCursor {
     }
 
     /// Get query optimization status
-    fn get_optimization_status(&self) -> PyResult<PyObject> {
-        Python::with_gil(|py| {
-            let dict = PyDict::new_bound(py);
+    fn get_optimization_status(&self) -> PyResult<Py<PyAny>> {
+        Python::attach(|py| {
+            let dict = PyDict::new(py);
             dict.set_item("query_cache_enabled", self.enable_query_cache)?;
             dict.set_item("metrics_enabled", self.enable_metrics)?;
 
@@ -708,7 +670,7 @@ impl FirebirdCursor {
                 dict.set_item("cache_hit_rate_percent", hit_rate)?;
             }
 
-            Ok(dict.to_object(py))
+            dict.into_py_any(py)
         })
     }
 
@@ -802,7 +764,7 @@ impl FirebirdConnection {
 
         let mut guard = self.shared.lock().unwrap();
         let shared: &mut SharedConnection = &mut guard;
-        py.allow_threads(move || {
+        py.detach(move || {
             if shared.in_transaction {
                 shared
                     .conn
@@ -826,7 +788,7 @@ impl FirebirdConnection {
 
         let mut guard = self.shared.lock().unwrap();
         let shared: &mut SharedConnection = &mut guard;
-        py.allow_threads(move || {
+        py.detach(move || {
             if shared.in_transaction {
                 shared
                     .conn
@@ -849,7 +811,7 @@ impl FirebirdConnection {
 
         let mut guard = self.shared.lock().unwrap();
         let shared: &mut SharedConnection = &mut guard;
-        py.allow_threads(move || {
+        py.detach(move || {
             if let Some(mut conn) = shared.conn.take() {
                 if shared.in_transaction {
                     let _ = conn.rollback();
@@ -898,7 +860,7 @@ fn connect(
     // first execute; the handshake runs without the GIL
     let conn = {
         let info = Arc::clone(&connection_info);
-        py.allow_threads(move || create_connection(&info))?
+        py.detach(move || create_connection(&info))?
     };
 
     Ok(FirebirdConnection {
@@ -914,13 +876,13 @@ fn connect(
 
 /// Get global performance statistics
 #[pyfunction]
-fn get_performance_stats(py: Python) -> PyResult<PyObject> {
-    let dict = PyDict::new_bound(py);
+fn get_performance_stats(py: Python) -> PyResult<Py<PyAny>> {
+    let dict = PyDict::new(py);
 
     if let Ok(global_metrics) = PERFORMANCE_METRICS.lock() {
         for (operation, metrics_list) in global_metrics.iter() {
             if !metrics_list.is_empty() {
-                let operation_dict = PyDict::new_bound(py);
+                let operation_dict = PyDict::new(py);
 
                 // Calculate aggregated statistics
                 let total_queries = metrics_list.len();
@@ -943,7 +905,7 @@ fn get_performance_stats(py: Python) -> PyResult<PyObject> {
         }
     }
 
-    Ok(dict.to_object(py))
+    dict.into_py_any(py)
 }
 
 /// Clear global performance statistics
@@ -966,8 +928,8 @@ fn clear_type_conversion_cache() -> PyResult<()> {
 
 /// Get type conversion cache statistics
 #[pyfunction]
-fn get_type_conversion_cache_stats(py: Python) -> PyResult<PyObject> {
-    let dict = PyDict::new_bound(py);
+fn get_type_conversion_cache_stats(py: Python) -> PyResult<Py<PyAny>> {
+    let dict = PyDict::new(py);
 
     if let Ok(cache) = TYPE_CONVERSION_CACHE.lock() {
         dict.set_item("cache_size", cache.len())?;
@@ -981,13 +943,13 @@ fn get_type_conversion_cache_stats(py: Python) -> PyResult<PyObject> {
         dict.set_item("error", "Could not access cache")?;
     }
 
-    Ok(dict.to_object(py))
+    dict.into_py_any(py)
 }
 
 /// Get query optimization statistics
 #[pyfunction]
-fn get_query_optimization_stats(py: Python) -> PyResult<PyObject> {
-    let dict = PyDict::new_bound(py);
+fn get_query_optimization_stats(py: Python) -> PyResult<Py<PyAny>> {
+    let dict = PyDict::new(py);
 
     if let Ok(stats) = QUERY_OPTIMIZATION_STATS.lock() {
         dict.set_item("cache_hits", stats.cache_hits)?;
@@ -1019,7 +981,7 @@ fn get_query_optimization_stats(py: Python) -> PyResult<PyObject> {
         dict.set_item("sample_cached_queries", sample_entries)?;
     }
 
-    Ok(dict.to_object(py))
+    dict.into_py_any(py)
 }
 
 /// Clear query optimization caches and reset statistics

@@ -1,6 +1,6 @@
 [package]
 name = "fast_firebirdsql"
-version = "0.10.0"
+version = "0.11.0"
 edition = "2021"
 
 [lib]
@@ -9,7 +9,10 @@ crate-type = ["cdylib"]
 
 [dependencies]
 rsfbclient = { version = "0.25.2", default-features = false }
-pyo3 = { version = "0.22", features = ["extension-module"] }
+# abi3-py313: one wheel per platform for all Python >= 3.13
+# chrono: datetime conversions that work under the limited API
+# generate-import-lib: python3.dll import lib for Windows cross-builds
+pyo3 = { version = "0.28", features = ["extension-module", "abi3-py313", "chrono", "generate-import-lib"] }
 chrono = { version = "0.4", default-features = false }
 
 [target.x86_64-pc-windows-gnu.dependencies]
