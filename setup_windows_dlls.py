@@ -66,9 +66,11 @@ def setup_windows_dlls():
     
     print(f"Found Windows DLLs at: {windows_firebird_dir}")
     
-    # Copy DLLs to package directory (since the abi3 wheels, only
-    # fbclient.dll is bundled; python3.dll comes with CPython itself)
-    dlls_to_copy = ["fbclient.dll"]
+    # Copy DLLs to package directory (since the abi3 wheels python3.dll is no
+    # longer needed; it comes with CPython itself). fbclient.dll (x64) links
+    # the VC++ 2005 runtime, so msvcr80.dll + its SxS manifest ship along --
+    # clean Windows installs do not have that runtime.
+    dlls_to_copy = ["fbclient.dll", "msvcr80.dll", "Microsoft.VC80.CRT.manifest"]
     copied_dlls = []
     
     for dll_name in dlls_to_copy:

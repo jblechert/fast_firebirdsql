@@ -4,7 +4,7 @@ build-backend = "maturin"
 
 [project]
 name = "fast_firebirdsql"
-version = "0.11.0"
+version = "0.11.1"
 description = "Fast Firebird database queries using Rust - firebirdsql compatible"
 readme = "README.md"
 authors = [
@@ -36,9 +36,17 @@ markers = [
 [tool.maturin]
 features = ["pyo3/extension-module"]
 # Include the Firebird client DLL, setup script and third-party notices
-# in the wheel (abi3 links python3.dll, which every CPython install has)
+# in the wheel (abi3 links python3.dll, which every CPython install has).
+# fbclient.dll MUST be the x64 build (official Firebird 2.5.9 x64 zip kit) --
+# the 32-bit one loads fine on machines that also have a system-wide 64-bit
+# Firebird install (Windows skips wrong-arch DLLs and keeps searching) but
+# fails on clean clients with "%1 is not a valid Win32 application".
+# msvcr80.dll + manifest: fbclient 2.5 links the VC++ 2005 runtime, which
+# clean Windows installs do not ship.
 include = [
     { path = "windows-firebird/fbclient.dll", format = "wheel" },
+    { path = "windows-firebird/msvcr80.dll", format = "wheel" },
+    { path = "windows-firebird/Microsoft.VC80.CRT.manifest", format = "wheel" },
     { path = "setup_windows_dlls.py", format = "wheel" },
     { path = "THIRD-PARTY-NOTICES.md", format = "wheel" }
 ]
