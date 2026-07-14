@@ -4,7 +4,7 @@ use pyo3::sync::PyOnceLock;
 use pyo3::types::{PyBool, PyBytes, PyDict, PyTuple, PyType};
 use pyo3::IntoPyObjectExt;
 use rsfbclient::prelude::*;
-use rsfbclient::{Row, SimpleConnection, SqlType};
+use rsfbclient::{FbError, Row, SimpleConnection, SqlType};
 use chrono::{NaiveDate, NaiveDateTime};
 use std::collections::HashMap;
 use std::sync::{Arc, LazyLock, Mutex};
@@ -89,6 +89,29 @@ static QUERY_OPTIMIZATION_STATS: LazyLock<Mutex<QueryOptimizationStats>> =
 
 fn runtime_error(msg: impl Into<String>) -> PyErr {
     PyErr::new::<PyRuntimeError, _>(msg.into())
+}
+
+/// Does this error leave the connection unusable, so that it must be
+/// discarded and rebuilt rather than reused?
+///
+/// - `Io`: the socket to the server is gone.
+/// - SQLCODE -902: general fatal error, typically "Error writing/reading
+///   data to the connection" (a dropped or half-open connection).
+/// - SQLCODE -901: "unrecoverable conflict with limbo transaction" and
+///   similar unrecoverable states.
+/// - SQLCODE -502: "attempt to reopen an open cursor" -- the cached
+///   prepared statement is in a bad state; dropping the connection clears
+///   rsfbclient's statement cache so the next call starts clean.
+///
+/// Ordinary SQL errors (syntax -104, constraint violations, etc.) are NOT
+/// fatal: the connection stays perfectly usable, so they must not trigger
+/// a reconnect.
+fn is_fatal_conn_error(e: &FbError) -> bool {
+    match e {
+        FbError::Io(_) => true,
+        FbError::Sql { code, .. } => matches!(*code, -902 | -901 | -502),
+        FbError::Other(_) => false,
+    }
 }
 
 /// Firebird wire types as they appear in Column::raw_type (nullable bit
@@ -404,50 +427,71 @@ impl FirebirdCursor {
             && matches!(first_word.as_str(), "INSERT" | "UPDATE" | "DELETE" | "MERGE")
             && contains_returning(sql);
 
-        let mut guard = self.shared.lock().unwrap();
-        let shared: &mut SharedConnection = &mut guard;
+        let shared_arc = Arc::clone(&self.shared);
         let info = Arc::clone(&self.connection_info);
         let autocommit = self.autocommit;
 
         // All network work (connect, transaction start, execute, fetch)
-        // runs without the GIL so other Python threads keep running
+        // runs without the GIL so other Python threads keep running.
+        //
+        // The shared-connection Mutex is locked *inside* detach, i.e. after
+        // the GIL is released. Locking it before detach would deadlock when
+        // two Python threads share one connection: thread A holds the Mutex
+        // inside detach and needs the GIL back to return, while thread B
+        // holds the GIL and blocks on the Mutex before it can detach.
         let db_result: PyResult<DbResult> = py.detach(move || {
+            let mut guard = shared_arc.lock().unwrap();
+            let shared: &mut SharedConnection = &mut guard;
             if shared.conn.is_none() {
                 shared.conn = Some(create_connection(&info)?);
             }
-            // DB-API: statements run inside a transaction until
-            // commit()/rollback(), unless autocommit=True was requested
-            if !autocommit && !shared.in_transaction {
-                shared
-                    .conn
-                    .as_mut()
-                    .unwrap()
-                    .begin_transaction_config(default_transaction_config())
-                    .map_err(|e| runtime_error(format!("Failed to begin transaction: {e}")))?;
-                shared.in_transaction = true;
-            }
-            let conn = shared.conn.as_mut().unwrap();
+            // Run the DB interaction, keeping the raw FbError so that a
+            // fatal connection error can be detected below.
+            let outcome: Result<DbResult, FbError> = 'stmt: {
+                // DB-API: statements run inside a transaction until
+                // commit()/rollback(), unless autocommit=True was requested
+                if !autocommit && !shared.in_transaction {
+                    if let Err(e) = shared
+                        .conn
+                        .as_mut()
+                        .unwrap()
+                        .begin_transaction_config(default_transaction_config())
+                    {
+                        break 'stmt Err(e);
+                    }
+                    shared.in_transaction = true;
+                }
+                let conn = shared.conn.as_mut().unwrap();
 
-            if returns_rows {
-                let rows: Result<Vec<Row>, _> = conn
-                    .query_iter(sql, params)
-                    .map_err(|e| runtime_error(e.to_string()))?
-                    .collect();
-                Ok(DbResult::Rows(rows.map_err(|e| runtime_error(e.to_string()))?))
-            } else if has_returning {
-                let row: Row = conn
-                    .execute_returnable(sql, params)
-                    .map_err(|e| runtime_error(e.to_string()))?;
-                Ok(DbResult::Rows(vec![row]))
-            } else {
-                // INSERT/UPDATE/DELETE/DDL/...
-                let affected = conn
-                    .execute(sql, params)
-                    .map_err(|e| runtime_error(e.to_string()))?;
-                Ok(DbResult::Affected(affected))
+                if returns_rows {
+                    conn.query_iter(sql, params)
+                        .and_then(|it| it.collect::<Result<Vec<Row>, _>>())
+                        .map(DbResult::Rows)
+                } else if has_returning {
+                    conn.execute_returnable(sql, params).map(|row: Row| DbResult::Rows(vec![row]))
+                } else {
+                    // INSERT/UPDATE/DELETE/DDL/...
+                    conn.execute(sql, params).map(DbResult::Affected)
+                }
+            };
+
+            match outcome {
+                Ok(result) => Ok(result),
+                Err(e) => {
+                    // A connection-fatal error (socket loss, -902, or a
+                    // poisoned cursor/statement state) leaves the shared
+                    // connection unusable. Discard it so the next execute
+                    // reconnects fresh -- clearing rsfbclient's statement
+                    // cache -- instead of failing on every subsequent call
+                    // until the app is restarted.
+                    if is_fatal_conn_error(&e) {
+                        shared.conn = None;
+                        shared.in_transaction = false;
+                    }
+                    Err(runtime_error(e.to_string()))
+                }
             }
         });
-        drop(guard);
 
         match db_result? {
             DbResult::Rows(rows) => {
@@ -756,15 +800,19 @@ impl FirebirdConnection {
 
     /// Commit the current transaction
     fn commit(&self, py: Python<'_>) -> PyResult<()> {
-        let closed = self.closed.lock().unwrap();
-        if *closed {
-            return Err(runtime_error("Connection is closed"));
+        {
+            let closed = self.closed.lock().unwrap();
+            if *closed {
+                return Err(runtime_error("Connection is closed"));
+            }
         }
-        drop(closed);
 
-        let mut guard = self.shared.lock().unwrap();
-        let shared: &mut SharedConnection = &mut guard;
+        // Lock the shared Mutex inside detach (after releasing the GIL) to
+        // avoid the GIL/Mutex deadlock described in execute_inner.
+        let shared_arc = Arc::clone(&self.shared);
         py.detach(move || {
+            let mut guard = shared_arc.lock().unwrap();
+            let shared: &mut SharedConnection = &mut guard;
             if shared.in_transaction {
                 shared
                     .conn
@@ -780,15 +828,19 @@ impl FirebirdConnection {
 
     /// Roll back the current transaction
     fn rollback(&self, py: Python<'_>) -> PyResult<()> {
-        let closed = self.closed.lock().unwrap();
-        if *closed {
-            return Err(runtime_error("Connection is closed"));
+        {
+            let closed = self.closed.lock().unwrap();
+            if *closed {
+                return Err(runtime_error("Connection is closed"));
+            }
         }
-        drop(closed);
 
-        let mut guard = self.shared.lock().unwrap();
-        let shared: &mut SharedConnection = &mut guard;
+        // Lock the shared Mutex inside detach (after releasing the GIL) to
+        // avoid the GIL/Mutex deadlock described in execute_inner.
+        let shared_arc = Arc::clone(&self.shared);
         py.detach(move || {
+            let mut guard = shared_arc.lock().unwrap();
+            let shared: &mut SharedConnection = &mut guard;
             if shared.in_transaction {
                 shared
                     .conn
@@ -809,9 +861,12 @@ impl FirebirdConnection {
             *closed = true;
         }
 
-        let mut guard = self.shared.lock().unwrap();
-        let shared: &mut SharedConnection = &mut guard;
+        // Lock the shared Mutex inside detach (after releasing the GIL) to
+        // avoid the GIL/Mutex deadlock described in execute_inner.
+        let shared_arc = Arc::clone(&self.shared);
         py.detach(move || {
+            let mut guard = shared_arc.lock().unwrap();
+            let shared: &mut SharedConnection = &mut guard;
             if let Some(mut conn) = shared.conn.take() {
                 if shared.in_transaction {
                     let _ = conn.rollback();

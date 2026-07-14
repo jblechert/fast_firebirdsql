@@ -260,6 +260,50 @@ def test_multiple_cursors_share_connection(conn):
     assert c2.fetchall() == [(2,)]
 
 
+def test_shared_connection_across_threads_no_deadlock(conn):
+    """Two threads hammering one shared connection must not deadlock.
+
+    Regression test: the driver used to lock its internal connection Mutex
+    *before* releasing the GIL, so thread A (Mutex held, GIL released inside
+    the DB call) and thread B (GIL held, blocked on the Mutex) deadlocked.
+    On the buggy build the worker threads never finish and join() blocks
+    past the timeout below.
+    """
+    import threading
+
+    errors: list[str] = []
+    stop = threading.Event()
+
+    def worker(sql):
+        cur = conn.cursor()
+        while not stop.is_set():
+            try:
+                cur.execute(sql)
+                cur.fetchall()
+            except Exception as e:  # noqa: BLE001
+                errors.append(f"{type(e).__name__}: {e}")
+                return
+
+    threads = [
+        threading.Thread(target=worker, args=("SELECT RDB$RELATION_NAME FROM RDB$RELATIONS",)),
+        threading.Thread(target=worker, args=("SELECT COUNT(*) FROM RDB$RELATIONS",)),
+        threading.Thread(target=worker, args=("SELECT 1 FROM RDB$DATABASE",)),
+    ]
+    for t in threads:
+        t.start()
+
+    # Let them race for a moment, then signal stop and require a prompt join.
+    import time
+
+    time.sleep(2)
+    stop.set()
+    for t in threads:
+        t.join(timeout=15)
+        assert not t.is_alive(), "worker thread deadlocked (did not finish)"
+
+    assert errors == [], f"errors during concurrent access: {errors}"
+
+
 # --- write tests (FIREBIRD_ALLOW_WRITE_TESTS=1) ------------------------
 
 

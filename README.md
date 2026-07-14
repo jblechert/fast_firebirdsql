@@ -73,6 +73,21 @@ loss). Never interpolate untrusted input into SQL strings.
 - Wheels use the stable ABI (`cp313-abi3`, since v0.11.0): one wheel per
   platform runs on every CPython ≥ 3.13, including future versions.
 
+## Fixes in v0.11.2
+
+- **Deadlock when a connection is shared across threads (fixed).** The
+  driver locked its internal connection Mutex *before* releasing the GIL,
+  so two Python threads using one connection could deadlock (thread A held
+  the Mutex with the GIL released inside a DB call, thread B held the GIL
+  blocked on the Mutex). The Mutex is now taken after the GIL is released.
+  Concurrent access on a shared connection is fully serialised and no
+  longer hangs.
+- **Self-healing on fatal connection errors.** After a connection-fatal
+  error (socket loss, SQLCODE -902/-901, or a poisoned cursor state -502)
+  the connection is discarded and transparently rebuilt on the next call,
+  instead of every subsequent statement failing until the app is
+  restarted.
+
 ## Behaviour changes in v0.9.0 (drop-in compatibility with firebirdsql)
 
 - `INSERT/UPDATE/DELETE ... RETURNING` returns the row (previously the
